@@ -1,6 +1,7 @@
 """Fast checks of the pieces the results depend on: splits, preprocessing, forests, added columns,
 the cascade's fold and test-row rules, the depth rule and the statistics."""
 import numpy as np
+import pandas as pd
 import pytest
 
 from dfx import forest as forest_module
@@ -9,7 +10,7 @@ from dfx.data import fold_ids, inner_split, related_groups, subsample
 from dfx.features import Monotone, NonLinear, Outputs, Products, k_products
 from dfx.forest import grow_forest
 from dfx.prep import Binner, Preprocessor
-from dfx.report import holm, relative_reduction
+from dfx.report import holm, paired, relative_reduction
 
 TINY = CascadeConfig(n_trees=4, max_layers=3)
 
@@ -236,3 +237,9 @@ def test_depth_rule_follows_df21():
 def test_relative_reduction_and_holm():
     np.testing.assert_allclose(relative_reduction([0.2, 0.0, 0.1], [0.1, 0.0, 0.2]), [0.5, 0.0, -0.5])
     np.testing.assert_allclose(holm([0.01, 0.04, 0.03]), [0.03, 0.06, 0.06])
+
+
+def test_interim_report_pairs_runs():
+    runs = pd.DataFrame({"check": "default", "dataset": "a", "method": ["base", "base", "rf"], "seed": 0,
+                         "fold": [0, 1, 0]})
+    assert paired(runs).fold.tolist() == [0, 0]

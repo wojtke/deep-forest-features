@@ -4,6 +4,7 @@
 layer; committed), then reports/main/: summary.md with every table, LaTeX versions of the tables
 and figures. Only runs whose fingerprint matches the current code, data and settings are used.
 The hypothesis tests refuse to run unless every run of the methods they compare is finished.
+An interim report (--allow-incomplete) compares methods only on the runs that all of them finished.
 """
 import json
 from pathlib import Path
@@ -54,6 +55,14 @@ def collect(experiment: str, results: Path) -> tuple[pd.DataFrame, pd.DataFrame,
             layers.append(key | {"layer": layer["layer"], "oof_score": layer["oof_score"],
                                  "error": error(layer["metrics"], r["task_type"]), **layer["metrics"]})
     return pd.DataFrame(runs), pd.DataFrame(layers), pd.Series(missing, dtype=str).value_counts()
+
+
+def paired(runs: pd.DataFrame) -> pd.DataFrame:
+    """Only the (check, dataset, seed, fold) runs that every method of the check finished, so methods
+    are averaged over the same runs; a no-op when the experiment is complete."""
+    key = ["check", "dataset", "seed", "fold"]
+    n_methods = runs.groupby(key)["method"].transform("nunique")
+    return runs[n_methods == runs.groupby("check")["method"].transform("nunique")]
 
 
 # --- statistics ---------------------------------------------------------------------------------
@@ -323,8 +332,12 @@ def report(experiment: str, results: Path, out: Path, allow_incomplete: bool = F
                          f"`dfx status {experiment}`, or pass --allow-incomplete for an interim report")
     runs.to_csv(results / experiment / "runs.csv", index=False)
     layers.to_csv(results / experiment / "layers.csv", index=False)
+    if missing.sum():
+        runs = paired(runs)
+        layers = layers.merge(runs[["check", "dataset", "method", "seed", "fold"]])
     settings = experiment_settings(experiment)
-    title = f"# Report: {experiment}" + (f" (INCOMPLETE: {missing.sum()} tasks missing)" if missing.sum() else "")
+    title = f"# Report: {experiment}" + (f" (INCOMPLETE: {missing.sum()} tasks missing; only runs finished by "
+                                         "every method are used)" if missing.sum() else "")
     s = Summary(out / experiment, title)
     s.text(f"{len(runs)} runs on {runs.dataset.nunique()} datasets. Error = 1 - balanced accuracy "
            "(classification) or RMSE (regression); relative reduction = (e_ref - e) / max(e_ref, e) of errors "
