@@ -91,6 +91,12 @@ def test_binner_is_exact_for_few_values_and_has_255_bins():
     np.testing.assert_array_equal(Binner(0).fit(many).transform(many), many.astype(np.float32))
 
 
+def test_binner_keeps_repeated_thresholds_like_df21():
+    col = np.r_[np.zeros(500), np.arange(1.0, 501)][:, None]  # half zeros: 127 thresholds are 0
+    bins = Binner().fit(col).transform(col)[:, 0]
+    assert bins[0] == 0 and bins[500] == 127 and bins.max() == 254  # bin numbers 1-126 unused
+
+
 def test_monotone_columns_bin_like_raw_predictions():
     p = np.random.default_rng(0).random((400, 4))
     sig = 1 / (1 + np.exp(-p))

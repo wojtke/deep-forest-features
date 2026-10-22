@@ -41,9 +41,11 @@ class Preprocessor:
 
 class Binner:
     """DF21 percentile binning (deepforest/_binner.py L23-86): at most 255 bins, thresholds at
-    `np.percentile(col, linspace(0, 100, 256)[1:-1], method="midpoint")`; a column with at most
-    255 distinct values is binned exactly at midpoints between them. x <= threshold goes to the
-    lower bin. `n_bins = 0` disables binning (sensitivity check). Output is float32 for sklearn.
+    `np.percentile(col, linspace(0, 100, 256)[1:-1], method="midpoint")`, repeated thresholds kept
+    as in DF21 (so a column with ties skips bin numbers, which changes where ERF's random
+    thresholds fall); a column with at most 255 distinct values is binned exactly at midpoints
+    between them. x <= threshold goes to the lower bin. `n_bins = 0` disables binning (sensitivity
+    check). Output is float32 for sklearn.
     """
 
     def __init__(self, n_bins: int = 255):
@@ -58,7 +60,7 @@ class Binner:
                     edges = (distinct[:-1] + distinct[1:]) / 2
                 else:
                     q = np.linspace(0, 100, self.n_bins + 1)[1:-1]
-                    edges = np.unique(np.percentile(col, q, method="midpoint"))
+                    edges = np.percentile(col, q, method="midpoint")
                 self.edges.append(edges)
         return self
 

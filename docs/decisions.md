@@ -19,7 +19,7 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Layer outputs passed on | every forest's output, concatenated (RF first); binary keeps both columns | DF21 `_layer.py` L201–254 | – |
 | Layer predictions for training rows | 3-fold out-of-fold, same folds at every layer | plan (Zhou & Feng 2019); DF21 uses out-of-bag | 5 folds |
 | Test-row inputs | P = mean of the fold models' predictions; each added column = mean of its values from each fold model | plan §3 | – |
-| Binning | 255 percentile bins, midpoint thresholds, exact for ≤255 distinct values | DF21 `_binner.py` L23–86 | no binning |
+| Binning | 255 percentile bins, midpoint thresholds, repeated thresholds kept (tied columns skip bin numbers), exact for ≤255 distinct values; checked bin for bin against DF21's `Binner` | DF21 `_binner.py` L23–86 | no binning |
 | Binner scope | X once on all outer-training rows; P and added columns per fold model on its training rows | ours, adapted from DF21 (X once; new columns per layer) | – |
 | Depth rule | a layer improves if it beats the best so far by 1e-5; stop after 2 layers without improvement; at most 20 layers, the first included | DF21 `cascade.py` L718–747, L930–962 | – |
 | Depth score | balanced accuracy / mean squared error | plan (DF21: accuracy / MSE) | – |
