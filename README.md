@@ -51,7 +51,8 @@ failed and missing tasks. The main run needs roughly 70–110 CPU-hours (plan §
 
 Hypotheses H1–H5 are decided by two-sided Wilcoxon tests with Holm's correction over the 32 datasets.
 Every setting and its source (the plan, the DF21 package source, a library default, or our own choice)
-is in [docs/decisions.md](docs/decisions.md).
+is in [docs/decisions.md](docs/decisions.md). On four datasets the base cascade scores within
+fold-to-fold noise of the official DF21 package: [docs/df21-check.md](docs/df21-check.md).
 
 ## How it works
 
