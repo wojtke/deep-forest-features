@@ -128,7 +128,7 @@ def common_depth(layers: pd.DataFrame) -> pd.DataFrame:
             continue
         row = {m: float(np.median(relative_reduction(err["base"], err[m]))) for m in CASCADES if m in err and m != "base"}
         out[depth] = row | {"datasets": len(err)}
-    return pd.DataFrame(out).T
+    return pd.DataFrame(out).T.rename_axis("depth")
 
 
 # --- writing ------------------------------------------------------------------------------------
