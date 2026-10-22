@@ -32,7 +32,8 @@ uv run dfx report sensitivity
 
 `dfx run` takes `--datasets`, `--methods`, `--seeds`, `--folds` and `--checks` (comma-separated)
 to run a subset, and `--dry-run` to list what would run. `dfx status main` counts finished,
-failed and missing tasks. The main run needs roughly 70–110 CPU-hours (plan §5).
+failed and missing tasks. A one-fold pilot on 22.10 puts the main run at about 40 CPU-hours
+(about 5 hours on 8 workers) and the sensitivity checks at roughly 60.
 
 ## What is compared
 
@@ -65,9 +66,10 @@ fold-to-fold noise of the official DF21 package: [docs/df21-check.md](docs/df21-
 - **Tasks** (`src/dfx/run.py`). An experiment file in `experiments/` expands into tasks, one per
   dataset × method × seed × outer fold. They run in a pool of single-threaded processes, largest first.
 - **Results**. Each task writes `results/<experiment>/<check>/<dataset>/<method>/s<seed>-f<fold>.npz`
-  (test predictions of every layer) and then `.json` (settings, metrics per layer, chosen columns, timings).
-  The JSON carries a fingerprint of the code, data, split and settings. A rerun skips a task only
-  if the fingerprint still matches, and reports stale results instead of reusing them.
+  and `.json` (schema in [AGENTS.md](AGENTS.md)), with a fingerprint of the code, `uv.lock`, data,
+  split and settings. A rerun skips a task only if the fingerprint still matches. If a worker
+  process dies, the tasks it may have been running are retried one at a time and the culprit is
+  recorded as failed.
 - **Report** (`src/dfx/report.py`). Writes `results/<experiment>/runs.csv` and `layers.csv` (committed),
   plus `reports/<experiment>/summary.md` with LaTeX tables and figures.
 
@@ -78,19 +80,19 @@ The per-run files are not in git; they are attached to the GitHub release of eac
 - Python 3.12 and every package version come from `uv.lock`; `results/<experiment>/manifest.json`
   records versions, platform, git commit and dataset hashes.
 - Downloads are checked against pinned sha256 hashes. Outer splits are committed in `splits/`.
-- Seeds are fixed: outer seeds 0, 1, 2. Every random choice is drawn from
-  `SeedSequence([seed, dataset, fold, layer, inner fold, stream])` and never depends on the method,
-  so variants grow identical trees wherever their inputs coincide.
+- Seeds are fixed: outer splits use seeds 0, 1, 2 and the 20,000-row subsample seed 0. Every random
+  choice inside a task comes from `SeedSequence([seed, dataset, fold, layer, inner fold, stream])` and
+  never depends on the method, so variants grow identical trees wherever their inputs coincide.
 - Results are identical with 1 or many workers (tested).
 
 ## Layout
 
 ```
-src/dfx/      data.py datasets.py prep.py forest.py features.py cascade.py baselines.py run.py report.py cli.py
+src/dfx/      data.py datasets.py prep.py forest.py features.py cascade.py baselines.py metrics.py run.py report.py cli.py
 experiments/  main.toml sensitivity.toml smoke.toml
 tests/        test_core.py (unit) test_smoke.py (end to end)
 scripts/      check_df21.py (comparison with the official DF21 package)
-docs/         plan.pdf decisions.md
+docs/         plan.pdf decisions.md df21-check.md
 data/         downloads and prepared arrays (not in git); AUDIT.md
 splits/       outer fold assignments
 results/      per-run files (not in git); runs.csv, layers.csv, manifest.json

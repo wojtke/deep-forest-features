@@ -26,13 +26,13 @@ SEED = 0
 def export(names):
     import numpy as np
 
-    from dfx.data import load, outer_folds
+    from dfx.data import load, outer_split
     from dfx.prep import Preprocessor
 
     FOLDER.mkdir(parents=True, exist_ok=True)
     for name in names:
         data = load(name)
-        folds, _ = outer_folds(data, SEED, 5)
+        folds, _ = outer_split(data, SEED, 5)
         for k in range(5):
             train, test = np.flatnonzero(folds != k), np.flatnonzero(folds == k)
             prep = Preprocessor().fit(data.X[train], data.categorical)
@@ -64,7 +64,8 @@ def compare():
     import numpy as np
 
     df21 = json.loads((FOLDER / "df21-results.json").read_text())
-    rows = ["| dataset | metric | DF21 0.1.7 | ours (base cascade) | DF21 layers kept | our best layer |", "|---|---|---|---|---|---|"]
+    rows = ["| dataset | metric | DF21 0.1.7 | ours (base cascade) | DF21 layers kept | our best layer |",
+            "|---|---|---|---|---|---|"]
     names = sorted({k.rsplit("-f", 1)[0] for k in df21})
     for name in names:
         theirs, ours, l1, l2 = [], [], [], []
@@ -86,5 +87,9 @@ def compare():
 
 
 if __name__ == "__main__":
-    command, args = sys.argv[1], sys.argv[2:]
-    {"export": lambda: export(args), "fit": fit, "compare": compare}[command]()
+    if sys.argv[1] == "export":
+        export(sys.argv[2:])
+    elif sys.argv[1] == "fit":
+        fit()
+    else:
+        compare()

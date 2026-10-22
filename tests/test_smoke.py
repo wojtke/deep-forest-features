@@ -1,8 +1,9 @@
 """End to end: the smoke experiment in two worker processes, determinism, resume and the report."""
 import json
+from importlib.metadata import version
 
 from dfx.report import report
-from dfx.run import _git, fingerprints, run_experiment, run_task, state, tasks
+from dfx.run import PACKAGES, _git, code_hash, fingerprints, run_experiment, run_task, state, tasks
 
 TIMINGS = ("cpu_seconds", "wall_seconds", "worker_peak_rss_mb")
 
@@ -19,16 +20,18 @@ def test_smoke_experiment_end_to_end(tmp_path):
     selected = tasks("smoke")
     fps, _ = fingerprints(selected)
     assert all(state(t, results, fps[t]) == "done" for t in selected)
+    records = {t: json.loads(t.path(results).with_suffix(".json").read_text()) for t in selected}
+    assert all(r["metrics"] == r["layers"][r["best_layer"] - 1]["metrics"] for r in records.values())
 
-    # The same task run again in this process gives the same result.
-    task = next(t for t in selected if t.method == "residual_xx")
-    path = task.path(results).with_suffix(".json")
-    again = run_task(task, tmp_path / "again", fps[task], _git())
-    assert without_timings(json.loads(path.read_text())) == without_timings(again)
+    # Every method on one dataset, run again in this process, gives the same results as the pool.
+    meta = {"code": code_hash(), "git": _git(), "versions": {p: version(p) for p in PACKAGES}}
+    for t in [t for t in selected if t.dataset == "smoke_pair" and t.fold == 0]:
+        assert without_timings(records[t]) == without_timings(run_task(t, tmp_path / "again", fps[t], meta))
 
     # A result with another fingerprint is stale and is re-run; finished ones are skipped.
-    record = json.loads(path.read_text())
-    path.write_text(json.dumps(record | {"fingerprint": "old"}))
+    task = next(t for t in selected if t.method == "residual_xx")
+    path = task.path(results).with_suffix(".json")
+    path.write_text(json.dumps(records[task] | {"fingerprint": "old"}))
     assert state(task, results, fps[task]) == "stale"
     assert run_experiment("smoke", workers=2, results=results)
     assert state(task, results, fps[task]) == "done"

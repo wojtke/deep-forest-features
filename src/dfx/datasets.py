@@ -1,66 +1,35 @@
 """The 32 datasets of plan Table 2, plus tiny smoke datasets for tests.
 
-Each `Spec` names its raw files (URL + pinned sha256), a reader returning one frame with every
+Each `Spec` names its raw archive (URL + pinned sha256), a reader returning one frame with every
 column, the target, and the columns excluded by plan §4 (ids, timestamps, sampling weights,
 columns that reveal the target). See data/AUDIT.md for what each spec produces.
 """
-from __future__ import annotations
-
 import io
 import re
+import subprocess
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from .data import Dataset, Source, Spec, related_groups
+from .data import Dataset, Spec, related_groups
 
 UCI = "https://archive.ics.uci.edu/static/public"
 
 
-def from_zip(raw: Path, archive: str, member: str, **read) -> pd.DataFrame:
-    """Read one CSV-like or Excel member of a downloaded zip archive (Excel: first sheet unless
-    `sheet_name` is given)."""
+def zip_bytes(raw: Path, archive: str, member: str, inner: str | None = None) -> bytes:
+    """One member of the downloaded zip, or of a zip `inner` inside it."""
     with zipfile.ZipFile(raw / archive) as z:
-        name = next(n for n in z.namelist() if n.endswith(member))
-        if name.endswith((".xls", ".xlsx")):
-            return pd.read_excel(io.BytesIO(z.read(name)), **read)
-        with z.open(name) as f:
-            return pd.read_csv(f, **read)
+        if inner:
+            z = zipfile.ZipFile(io.BytesIO(z.read(inner)))
+        return z.read(next(n for n in z.namelist() if n.endswith(member)))
 
 
-def from_inner_zip(raw: Path, archive: str, inner: str, member: str, **read_csv) -> pd.DataFrame:
-    """Read a CSV member of a zip that is itself inside the downloaded zip."""
-    with zipfile.ZipFile(raw / archive) as z, zipfile.ZipFile(io.BytesIO(z.read(inner))) as zz:
-        with zz.open(member) as f:
-            return pd.read_csv(f, **read_csv)
-
-
-def unlzw(data: bytes) -> bytes:
-    """Decompress a Unix `compress` (.Z) file, which Python's standard library cannot read."""
-    if data[:2] != b"\x1f\x9d":
-        raise ValueError("not a .Z file")
-    maxbits, block = data[2] & 0x1F, bool(data[2] & 0x80)
-    table = [bytes([i]) for i in range(256)] + [b""] * block  # in block mode, code 256 clears
-    body, out, prev = data[3:], bytearray(), None
-    bits, pos, start = 9, 0, 0  # code width, bit position, where codes of this width began
-    while pos + bits <= 8 * len(body):
-        code = int.from_bytes(body[pos >> 3:(pos >> 3) + 3], "little") >> (pos & 7) & ((1 << bits) - 1)
-        pos += bits
-        if block and code == 256:  # like a width change, a clear skips to the next group of 8 codes
-            pos = start = start + -(-(pos - start) // (8 * bits)) * 8 * bits
-            table, prev, bits = table[:257], None, 9
-            continue
-        entry = table[code] if code < len(table) else prev + prev[:1]
-        out += entry
-        if prev is not None and len(table) < 1 << maxbits:
-            table.append(prev + entry[:1])
-        prev = entry
-        if len(table) >= 1 << bits and (bits < maxbits or bits == 9):  # as compress: 9 -> 10 even at -b 9
-            pos = start = start + -(-(pos - start) // (8 * bits)) * 8 * bits
-            bits += 1
-    return bytes(out)
+def from_zip(raw: Path, archive: str, member: str, inner: str | None = None, **read) -> pd.DataFrame:
+    """Read a CSV-like or Excel member (Excel: first sheet unless `sheet_name` is given)."""
+    data = io.BytesIO(zip_bytes(raw, archive, member, inner))
+    return pd.read_excel(data, **read) if member.endswith((".xls", ".xlsx")) else pd.read_csv(data, **read)
 
 
 # --- classification -------------------------------------------------------------------------
@@ -71,8 +40,7 @@ def read_sonar(raw: Path) -> pd.DataFrame:
 
 
 def read_spambase(raw: Path) -> pd.DataFrame:
-    with zipfile.ZipFile(raw / "spambase.zip") as z:
-        doc = z.read("spambase.names").decode().splitlines()
+    doc = zip_bytes(raw, "spambase.zip", "spambase.names").decode().splitlines()
     names = [line.split(":")[0] for line in doc if line.rstrip().endswith("continuous.")]
     return from_zip(raw, "spambase.zip", "spambase.data", header=None, names=[*names, "class"])
 
@@ -87,8 +55,7 @@ def read_qsar_biodeg(raw: Path) -> pd.DataFrame:
 
 
 def read_steel_plates(raw: Path) -> pd.DataFrame:
-    with zipfile.ZipFile(raw / "steel_plates.zip") as z:
-        names = z.read("Faults27x7_var").decode().split()  # 27 features, then 7 one-hot faults
+    names = zip_bytes(raw, "steel_plates.zip", "Faults27x7_var").decode().split()  # 27 features, then 7 faults
     frame = from_zip(raw, "steel_plates.zip", "Faults.NNA", sep=r"\s+", header=None, names=names)
     faults = frame[names[27:]]
     if not (faults.sum(axis=1) == 1).all():
@@ -103,9 +70,7 @@ def read_vehicle(raw: Path) -> pd.DataFrame:
              "SCALED VARIANCE ALONG MINOR AXIS", "SCALED RADIUS OF GYRATION", "SKEWNESS ABOUT MAJOR AXIS",
              "SKEWNESS ABOUT MINOR AXIS", "KURTOSIS ABOUT MINOR AXIS", "KURTOSIS ABOUT MAJOR AXIS",
              "HOLLOWS RATIO", "class"]
-    with zipfile.ZipFile(raw / "vehicle.zip") as z:
-        parts = [pd.read_csv(z.open(n), sep=r"\s+", header=None, names=names)
-                 for n in sorted(z.namelist()) if n.endswith(".dat")]  # xaa.dat ... xai.dat
+    parts = [from_zip(raw, "vehicle.zip", f"xa{c}.dat", sep=r"\s+", header=None, names=names) for c in "abcdefghi"]
     return pd.concat(parts, ignore_index=True)
 
 
@@ -124,8 +89,8 @@ def read_tictactoe(raw: Path) -> pd.DataFrame:
 def read_page_blocks(raw: Path) -> pd.DataFrame:
     names = ["height", "length", "area", "eccen", "p_black", "p_and", "mean_tr", "blackpix", "blackand",
              "wb_trans", "class"]
-    with zipfile.ZipFile(raw / "page_blocks.zip") as z:
-        text = unlzw(z.read("page-blocks.data.Z"))
+    packed = zip_bytes(raw, "page_blocks.zip", "page-blocks.data.Z")  # Unix compress: gzip can read it
+    text = subprocess.run(["gzip", "-dc"], input=packed, capture_output=True, check=True).stdout
     return pd.read_csv(io.BytesIO(text), sep=r"\s+", header=None, names=names)
 
 
@@ -138,12 +103,18 @@ def read_german_credit(raw: Path) -> pd.DataFrame:
 
 
 def read_cardiotocography(raw: Path) -> pd.DataFrame:
-    sheet = from_zip(raw, "cardiotocography.zip", "CTG.xls", sheet_name="Data", header=1)
+    book = zip_bytes(raw, "cardiotocography.zip", "CTG.xls")
+    sheet = pd.read_excel(io.BytesIO(book), sheet_name="Data", header=1)
     # Columns 2-8 count AC ... DR per segment; the 21 UCI features (numbered 1-21 above the header)
     # repeat AC ... DP per second as "AC.1" ... "DP.1" and leave out DR. Unnamed columns are blank.
     frame = sheet.drop(columns=sheet.columns[2:9]).dropna(subset=["NSP"])  # sums below the data
     frame = frame.loc[:, ~frame.columns.str.startswith("Unnamed")]
-    return frame.rename(columns=lambda c: c.removesuffix(".1")).astype({"NSP": int})
+    frame = frame.rename(columns=lambda c: c.removesuffix(".1")).astype({"NSP": int}).reset_index(drop=True)
+    # Segments of one recording (one exam) are related rows; the recording is named in "Raw Data".
+    recordings = pd.read_excel(io.BytesIO(book), sheet_name="Raw Data").dropna(subset=["FileName"])
+    if not all((recordings[c].to_numpy() == frame[c].to_numpy()).all() for c in ("b", "e", "LB", "NSP")):
+        raise ValueError("cardiotocography: sheets Data and Raw Data rows differ")
+    return frame.assign(recording=recordings["FileName"].to_numpy())
 
 
 def read_climate_crashes(raw: Path) -> pd.DataFrame:
@@ -151,8 +122,7 @@ def read_climate_crashes(raw: Path) -> pd.DataFrame:
 
 
 def read_phishing(raw: Path) -> pd.DataFrame:
-    with zipfile.ZipFile(raw / "phishing.zip") as z:
-        head, body = z.read("Training Dataset.arff").decode().split("@data")
+    head, body = zip_bytes(raw, "phishing.zip", "Training Dataset.arff").decode().split("@data")
     return pd.read_csv(io.StringIO(body), header=None, names=re.findall(r"@attribute\s+(\S+)", head))
 
 
@@ -167,7 +137,7 @@ def read_credit_default(raw: Path) -> pd.DataFrame:
 
 
 def read_bank_marketing(raw: Path) -> pd.DataFrame:
-    return from_inner_zip(raw, "bank_marketing.zip", "bank.zip", "bank-full.csv", sep=";")
+    return from_zip(raw, "bank_marketing.zip", "bank-full.csv", inner="bank.zip", sep=";")
 
 
 def read_adult(raw: Path) -> pd.DataFrame:
@@ -204,8 +174,7 @@ def read_automobile(raw: Path) -> pd.DataFrame:
 
 
 def read_communities(raw: Path) -> pd.DataFrame:
-    with zipfile.ZipFile(raw / "communities.zip") as z:
-        names = re.findall(r"@attribute (\S+)", z.read("communities.names").decode())
+    names = re.findall(r"@attribute (\S+)", zip_bytes(raw, "communities.zip", "communities.names").decode())
     return from_zip(raw, "communities.zip", "communities.data", header=None, names=names, na_values="?")
 
 
@@ -235,7 +204,7 @@ def read_parkinsons(raw: Path) -> pd.DataFrame:
 
 
 def read_student_math(raw: Path) -> pd.DataFrame:
-    return from_inner_zip(raw, "student_math.zip", "student.zip", "student-mat.csv", sep=";")
+    return from_zip(raw, "student_math.zip", "student-mat.csv", inner="student.zip", sep=";")
 
 
 def read_superconductivity(raw: Path) -> pd.DataFrame:
@@ -268,155 +237,160 @@ def read_california(raw: Path) -> pd.DataFrame:
 
 CTG_PATTERNS = ("A", "B", "C", "D", "E", "AD", "DE", "LD", "FS", "SUSP")  # one-hot FHR pattern classes
 COMMUNITIES_IDS = ("state", "county", "community", "communityname", "fold")  # the 5 non-predictive
+AIR_REFERENCE = ("NMHC(GT)", "C6H6(GT)", "NOx(GT)", "NO2(GT)")  # reference analyzers besides the target
 
 SPECS = [
     # --- classification
     Spec("sonar", "classification", "class", read_sonar,
-         (Source(f"{UCI}/151/connectionist+bench+sonar+mines+vs+rocks.zip", "sonar.zip",
-                 "088b0b6813fb5ab84736bc2a1e3d6bb886e317520d2f2c04152e2ed65af7a18d"),),
+         url=f"{UCI}/151/connectionist+bench+sonar+mines+vs+rocks.zip",
+         sha256="088b0b6813fb5ab84736bc2a1e3d6bb886e317520d2f2c04152e2ed65af7a18d",
          plan=(208, 60)),
     Spec("spambase", "classification", "class", read_spambase,
-         (Source(f"{UCI}/94/spambase.zip", "spambase.zip",
-                 "813ac1df8effac70463c09c9c4b11e8803eefcab54771af66150852bcdcd1636"),), plan=(4601, 57),
+         url=f"{UCI}/94/spambase.zip",
+         sha256="813ac1df8effac70463c09c9c4b11e8803eefcab54771af66150852bcdcd1636", plan=(4601, 57),
          note="class 1 = spam; names from spambase.names"),
     Spec("qsar_biodeg", "classification", "class", read_qsar_biodeg,
-         (Source(f"{UCI}/254/qsar+biodegradation.zip", "qsar_biodeg.zip",
-                 "b5f7cf1b05564d94d65265a9a4aeae5fffcd15b8d3bcafe4225a8827d7ae08ac"),), plan=(1055, 41),
+         url=f"{UCI}/254/qsar+biodegradation.zip",
+         sha256="b5f7cf1b05564d94d65265a9a4aeae5fffcd15b8d3bcafe4225a8827d7ae08ac", plan=(1055, 41),
          note="names from the UCI variable information"),
     Spec("steel_plates", "classification", "fault", read_steel_plates,
-         (Source(f"{UCI}/198/steel+plates+faults.zip", "steel_plates.zip",
-                 "cb8eb9859198b63f053e443513036b401746fa517ef58bd17c846c6741c93919"),), plan=(1941, 27),
+         url=f"{UCI}/198/steel+plates+faults.zip",
+         sha256="cb8eb9859198b63f053e443513036b401746fa517ef58bd17c846c6741c93919", plan=(1941, 27),
          note="target = which of the 7 one-hot fault columns is set (exactly one per row, checked); "
               "the 7 are not features"),
     Spec("vehicle", "classification", "class", read_vehicle,
-         (Source(f"{UCI}/149/statlog+vehicle+silhouettes.zip", "vehicle.zip",
-                 "66ca807d5be5e3403cf035a579e85113880c3019d6cde825670deff05a4a71e0"),), plan=(846, 18),
+         url=f"{UCI}/149/statlog+vehicle+silhouettes.zip",
+         sha256="66ca807d5be5e3403cf035a579e85113880c3019d6cde825670deff05a4a71e0", plan=(846, 18),
          note="xaa.dat ... xai.dat concatenated"),
     Spec("heart_statlog", "classification", "heart-disease", read_heart_statlog,
-         (Source(f"{UCI}/145/statlog+heart.zip", "heart_statlog.zip",
-                 "04e44018af4f4b32008029fbfb1079e112d3b372bb032dd1ae361c74d7528b2c"),), plan=(270, 13),
+         url=f"{UCI}/145/statlog+heart.zip",
+         sha256="04e44018af4f4b32008029fbfb1079e112d3b372bb032dd1ae361c74d7528b2c", plan=(270, 13),
          categorical=("chest-pain", "electrocardiographic", "thal"),
          note="class 1 absence, 2 presence; chest-pain, electrocardiographic, thal nominal (heart.doc, UCI)"),
     Spec("tictactoe", "classification", "class", read_tictactoe,
-         (Source(f"{UCI}/101/tic+tac+toe+endgame.zip", "tictactoe.zip",
-                 "c615fcd01bc23ab99daa36bbc30d897d53f7d3e151257880cada888c5451a586"),), plan=(958, 9)),
+         url=f"{UCI}/101/tic+tac+toe+endgame.zip",
+         sha256="c615fcd01bc23ab99daa36bbc30d897d53f7d3e151257880cada888c5451a586", plan=(958, 9)),
     Spec("page_blocks", "classification", "class", read_page_blocks,
-         (Source(f"{UCI}/78/page+blocks+classification.zip", "page_blocks.zip",
-                 "b766faf029e05afd8c3969376fbdd01e377c7580eb88262772aa9c9e02fe28bf"),), plan=(5473, 10),
-         note="page-blocks.data.Z decompressed by unlzw (checked against gzip -d)"),
+         url=f"{UCI}/78/page+blocks+classification.zip",
+         sha256="b766faf029e05afd8c3969376fbdd01e377c7580eb88262772aa9c9e02fe28bf", plan=(5473, 10),
+         note="page-blocks.data.Z decompressed with gzip -dc"),
     Spec("german_credit", "classification", "class", read_german_credit,
-         (Source(f"{UCI}/144/statlog+german+credit+data.zip", "german_credit.zip",
-                 "e12d9d5def6845c0622634a1cd2ab87fa470668c4298f1ec52a4e403376a435b"),), plan=(1000, 20),
+         url=f"{UCI}/144/statlog+german+credit+data.zip",
+         sha256="e12d9d5def6845c0622634a1cd2ab87fa470668c4298f1ec52a4e403376a435b", plan=(1000, 20),
          note="german.data (symbolic codes A11 ...); class 1 good, 2 bad; names from german.doc"),
     Spec("cardiotocography", "classification", "NSP", read_cardiotocography,
-         (Source(f"{UCI}/193/cardiotocography.zip", "cardiotocography.zip",
-                 "ba2853564e282779907242b7bd8a83265d9fc4e79bb008573967daa16677bb6c"),), plan=(2126, 21),
-         drop=("b", "e", "CLASS", *CTG_PATTERNS),
+         url=f"{UCI}/193/cardiotocography.zip",
+         sha256="ba2853564e282779907242b7bd8a83265d9fc4e79bb008573967daa16677bb6c", plan=(2126, 21),
+         drop=("b", "e", "CLASS", *CTG_PATTERNS), group="recording",
          note="PROPOSED (plan-silent, confirm): CLASS and the 10 pattern columns A ... SUSP (other expert "
               "labels of the same exam) dropped. CTG.xls sheet Data, UCI's 21 features; raw also counts b, e "
-              "(segment start/end instants, excluded) and those 11 labels"),
+              "(segment start/end instants, excluded), those 11 labels and the recording; groups = the 352 "
+              "recordings (sheet Raw Data, rows checked to align)"),
     Spec("climate_crashes", "classification", "outcome", read_climate_crashes,
-         (Source(f"{UCI}/252/climate+model+simulation+crashes.zip", "climate_crashes.zip",
-                 "fe8c0c2b79d1beedf31fbca2db8a97cec3c1b773ee29ed3357a2ff1dc8dd12d0"),), plan=(540, 18),
+         url=f"{UCI}/252/climate+model+simulation+crashes.zip",
+         sha256="fe8c0c2b79d1beedf31fbca2db8a97cec3c1b773ee29ed3357a2ff1dc8dd12d0", plan=(540, 18),
          drop=("Study", "Run"), note="raw also counts the Study and Run ids (plan does not); outcome 0 = crash"),
     Spec("phishing", "classification", "Result", read_phishing,
-         (Source(f"{UCI}/327/phishing+websites.zip", "phishing.zip",
-                 "514f582cb44cba17251baf1d59f64cddff16efa2b644d091ce8d2a1e8d492940"),), plan=(11055, 30),
+         url=f"{UCI}/327/phishing+websites.zip",
+         sha256="514f582cb44cba17251baf1d59f64cddff16efa2b644d091ce8d2a1e8d492940", plan=(11055, 30),
          note="PROPOSED (plan-silent, confirm): the {-1, 0, 1} codes are numeric (ordinal), not categorical"),
     Spec("spectf", "classification", "diagnosis", read_spectf,
-         (Source(f"{UCI}/96/spectf+heart.zip", "spectf.zip",
-                 "24409e8bd112d372ec993304f029d61e5d2daa2de091399e2c3f84eed4f021ce"),), plan=(267, 44),
+         url=f"{UCI}/96/spectf+heart.zip",
+         sha256="24409e8bd112d372ec993304f029d61e5d2daa2de091399e2c3f84eed4f021ce", plan=(267, 44),
          note="SPECTF.train + SPECTF.test (80 + 187 rows)"),
     Spec("credit_default", "classification", "default payment next month", read_credit_default,
-         (Source(f"{UCI}/350/default+of+credit+card+clients.zip", "credit_default.zip",
-                 "56c885f84457f6680f8438f02bfcdac9579323d8a94465ee5f26e32baa727602"),), plan=(30000, 23),
+         url=f"{UCI}/350/default+of+credit+card+clients.zip",
+         sha256="56c885f84457f6680f8438f02bfcdac9579323d8a94465ee5f26e32baa727602", plan=(30000, 23),
          drop=("ID",), note="raw also counts the ID column (plan does not); > 20,000 rows, subsampled"),
     Spec("bank_marketing", "classification", "y", read_bank_marketing,
-         (Source(f"{UCI}/222/bank+marketing.zip", "bank_marketing.zip",
-                 "e0bf5f5de5b846e2f18e9d90606637267d46dfa260e0f17bb12e605db5efbeb4"),), plan=(45211, 16),
+         url=f"{UCI}/222/bank+marketing.zip",
+         sha256="e0bf5f5de5b846e2f18e9d90606637267d46dfa260e0f17bb12e605db5efbeb4", plan=(45211, 16),
          drop=("duration",),
          note="PROPOSED (plan-silent, confirm): day and month of the last contact kept as features (calendar "
               "fields, not timestamps). bank-full.csv from the inner bank.zip; 'unknown' is a category; "
               "> 20,000 rows, subsampled"),
     Spec("adult", "classification", "income", read_adult,
-         (Source(f"{UCI}/2/adult.zip", "adult.zip",
-                 "7537312dd56c2b98035880805ce99e68183a30ee468aa5329d6df0fbb3cc21bb"),), plan=(48842, 14),
+         url=f"{UCI}/2/adult.zip",
+         sha256="7537312dd56c2b98035880805ce99e68183a30ee468aa5329d6df0fbb3cc21bb", plan=(48842, 14),
          drop=("fnlwgt",), note="adult.data + adult.test, test labels without the trailing '.'; "
                                 "> 20,000 rows, subsampled"),
     # --- regression
     Spec("abalone", "regression", "rings", read_abalone,
-         (Source(f"{UCI}/1/abalone.zip", "abalone.zip",
-                 "755a6a67c5b266961a3f149ea13be2cfb6e6c727e48cee3c83bc0b4526210ee4"),), plan=(4177, 8)),
+         url=f"{UCI}/1/abalone.zip",
+         sha256="755a6a67c5b266961a3f149ea13be2cfb6e6c727e48cee3c83bc0b4526210ee4", plan=(4177, 8)),
     Spec("auto_mpg", "regression", "mpg", read_auto_mpg,
-         (Source(f"{UCI}/9/auto+mpg.zip", "auto_mpg.zip",
-                 "5fc1507522b73b8050d3aa45df51eefe1b666ae5f428a5f1347b6483339f1003"),), plan=(398, 7),
+         url=f"{UCI}/9/auto+mpg.zip",
+         sha256="5fc1507522b73b8050d3aa45df51eefe1b666ae5f428a5f1347b6483339f1003", plan=(398, 7),
          drop=("car_name",), note="raw also counts car_name (plan does not); 6 horsepower values missing"),
     Spec("automobile", "regression", "price", read_automobile,
-         (Source(f"{UCI}/10/automobile.zip", "automobile.zip",
-                 "0360d2379d2d505540f0c43bfe0ada96244ad2662faf9dada1629824948294ec"),), plan=(205, 25),
+         url=f"{UCI}/10/automobile.zip",
+         sha256="0360d2379d2d505540f0c43bfe0ada96244ad2662faf9dada1629824948294ec", plan=(205, 25),
          note="4 rows without price dropped; num-of-doors, num-of-cylinders are words, so categorical"),
     Spec("communities", "regression", "ViolentCrimesPerPop", read_communities,
-         (Source(f"{UCI}/183/communities+and+crime.zip", "communities.zip",
-                 "f0dcda420cdecc4dcf58939f6e6e637969d14ac8f95da1abde495088714c5038"),), plan=(1994, 127),
+         url=f"{UCI}/183/communities+and+crime.zip",
+         sha256="f0dcda420cdecc4dcf58939f6e6e637969d14ac8f95da1abde495088714c5038", plan=(1994, 127),
          drop=COMMUNITIES_IDS, note="the 5 non-predictive columns excluded; many police columns ~84% missing"),
     Spec("servo", "regression", "class", read_servo,
-         (Source(f"{UCI}/87/servo.zip", "servo.zip",
-                 "02822bd9f00d8af7394163649e6398711da0a0b02170e380fd4d15b14e8a5659"),), plan=(167, 4)),
+         url=f"{UCI}/87/servo.zip",
+         sha256="02822bd9f00d8af7394163649e6398711da0a0b02170e380fd4d15b14e8a5659", plan=(167, 4)),
     Spec("energy", "regression", "Y1", read_energy,
-         (Source(f"{UCI}/242/energy+efficiency.zip", "energy.zip",
-                 "499441eee27929a4b00417f58fd8c63c9cc14b8a71520cd0dd27fcb626738351"),), plan=(768, 8),
+         url=f"{UCI}/242/energy+efficiency.zip",
+         sha256="499441eee27929a4b00417f58fd8c63c9cc14b8a71520cd0dd27fcb626738351", plan=(768, 8),
          drop=("Y2",), note="PROPOSED (plan-silent, confirm): Y2 (cooling load, a second target) dropped; "
                             "raw also counts it"),
     Spec("wine_red", "regression", "quality", read_wine_red,
-         (Source(f"{UCI}/186/wine+quality.zip", "wine_red.zip",
-                 "3ed56667f4b828242bd732d7d1dd7f2861e54432239d7fa63877014cbb0304d4"),), plan=(1599, 11),
+         url=f"{UCI}/186/wine+quality.zip",
+         sha256="3ed56667f4b828242bd732d7d1dd7f2861e54432239d7fa63877014cbb0304d4", plan=(1599, 11),
          note="winequality-red.csv only"),
     Spec("concrete_slump", "regression", "Compressive Strength (28-day)(Mpa)", read_concrete_slump,
-         (Source(f"{UCI}/182/concrete+slump+test.zip", "concrete_slump.zip",
-                 "68d6a6813261bf8ecf79d8d7cc82b665bd5e9e6800c7705a16e671688c78e491"),), plan=(103, 7),
+         url=f"{UCI}/182/concrete+slump+test.zip",
+         sha256="68d6a6813261bf8ecf79d8d7cc82b665bd5e9e6800c7705a16e671688c78e491", plan=(103, 7),
          drop=("No", "SLUMP(cm)", "FLOW(cm)"),
          note="PROPOSED (plan-silent, confirm): SLUMP and FLOW (other targets) dropped; also the row number "
               "No (an id); raw also counts all three"),
     Spec("real_estate", "regression", "Y house price of unit area", read_real_estate,
-         (Source(f"{UCI}/477/real+estate+valuation+data+set.zip", "real_estate.zip",
-                 "aa437bdac3ca23200258a0a58d251c0af90651aeaf7c7a07aaa714f0f9f25e2c"),), plan=(414, 6),
+         url=f"{UCI}/477/real+estate+valuation+data+set.zip",
+         sha256="aa437bdac3ca23200258a0a58d251c0af90651aeaf7c7a07aaa714f0f9f25e2c", plan=(414, 6),
          drop=("No", "X1 transaction date"),
-         note="raw also counts the row number No (plan does not), excluded as an id"),
+         note="PROPOSED (plan-silent, confirm): X1 transaction date (year + month) excluded as a timestamp. "
+              "Raw also counts the row number No (plan does not), excluded as an id"),
     Spec("parkinsons", "regression", "total_UPDRS", read_parkinsons,
-         (Source(f"{UCI}/189/parkinsons+telemonitoring.zip", "parkinsons.zip",
-                 "2f82bb0ef96fa7d8d7edf4d97b89173e07c2cca7723440a64bc38918a83345df"),), plan=(5875, 19),
+         url=f"{UCI}/189/parkinsons+telemonitoring.zip",
+         sha256="2f82bb0ef96fa7d8d7edf4d97b89173e07c2cca7723440a64bc38918a83345df", plan=(5875, 19),
          drop=("motor_UPDRS", "test_time"), group="subject#",
-         note="raw also counts subject# and motor_UPDRS (plan does not); groups = the 42 patients"),
+         note="PROPOSED (plan-silent, confirm): test_time (days since recruitment) excluded as a timestamp. "
+              "Raw also counts subject# and motor_UPDRS (plan does not); groups = the 42 patients"),
     Spec("student_math", "regression", "G3", read_student_math,
-         (Source(f"{UCI}/320/student+performance.zip", "student_math.zip",
-                 "82ae9d66437b9808df42e8c89d2bb179c46e9cfbcf06f38abc1d20b3b747e177"),), plan=(395, 30),
+         url=f"{UCI}/320/student+performance.zip",
+         sha256="82ae9d66437b9808df42e8c89d2bb179c46e9cfbcf06f38abc1d20b3b747e177", plan=(395, 30),
          drop=("G1", "G2"), note="student-mat.csv from the inner student.zip; raw also counts G1, G2 (plan does not)"),
     Spec("superconductivity", "regression", "critical_temp", read_superconductivity,
-         (Source(f"{UCI}/464/superconductivty+data.zip", "superconductivity.zip",
-                 "87f4490d73390ff94ee01dbf0d7d32abc80b22f2c803d471765cfc46a9f6371e"),), plan=(21263, 81),
+         url=f"{UCI}/464/superconductivty+data.zip",
+         sha256="87f4490d73390ff94ee01dbf0d7d32abc80b22f2c803d471765cfc46a9f6371e", plan=(21263, 81),
          group="material",
          note="raw also counts material, the formula from unique_m.csv (same row order, checked on "
               "critical_temp); groups = materials; > 20,000 rows, subsampled"),
     Spec("bike_sharing", "regression", "cnt", read_bike_sharing,
-         (Source(f"{UCI}/275/bike+sharing+dataset.zip", "bike_sharing.zip",
-                 "b70182d0d0508e9abbb79306ce5c0cec34869000f8220175ac83d11dbe845401"),), plan=(17379, 13),
+         url=f"{UCI}/275/bike+sharing+dataset.zip",
+         sha256="b70182d0d0508e9abbb79306ce5c0cec34869000f8220175ac83d11dbe845401", plan=(17379, 13),
          drop=("instant", "casual", "registered"), group="dteday",
          categorical=("season", "yr", "mnth", "hr", "weekday", "weathersit"),
          note="PROPOSED (plan-silent, confirm): calendar fields season, yr, mnth, hr, weekday kept as features "
               "(not timestamps). hour.csv; raw also counts instant, casual, registered (plan does not); "
               "groups = days; categorical as in the UCI table"),
     Spec("ccpp", "regression", "PE", read_ccpp,
-         (Source(f"{UCI}/294/combined+cycle+power+plant.zip", "ccpp.zip",
-                 "cc7b2a4977c0a44e8221c91d9a7e5746b3c68186cff7e5c61c70af6432b98c7a"),), plan=(9568, 4),
+         url=f"{UCI}/294/combined+cycle+power+plant.zip",
+         sha256="cc7b2a4977c0a44e8221c91d9a7e5746b3c68186cff7e5c61c70af6432b98c7a", plan=(9568, 4),
          note="first sheet only; the other 4 hold the same rows reshuffled"),
     Spec("air_quality", "regression", "CO(GT)", read_air_quality,
-         (Source(f"{UCI}/360/air+quality.zip", "air_quality.zip",
-                 "d4a64013fb385288a8a48d9d193ca7079b2e1bbddf6f8d458feb8c08ab2b8a2a"),), plan=(9357, 14),
-         drop=("Time",), group="Date", missing=(-200,),
-         note="PROPOSED (plan-silent, confirm): the other reference (GT) analyzers kept as features. "
-              "-200 = missing; rows without CO(GT) dropped; groups = days"),
+         url=f"{UCI}/360/air+quality.zip",
+         sha256="d4a64013fb385288a8a48d9d193ca7079b2e1bbddf6f8d458feb8c08ab2b8a2a", plan=(9357, 14),
+         drop=("Time", *AIR_REFERENCE), group="Date", missing=(-200,),
+         note="PROPOSED (plan-silent, confirm): the other reference analyzers (GT columns, other targets "
+              "like Energy Y2) dropped; Time (hour) excluded as a timestamp; the rows where every remaining "
+              "sensor is missing dropped. -200 = missing; rows without CO(GT) dropped; groups = days"),
     Spec("california", "regression", "MedHouseVal", read_california, plan=(20640, 8),
-         note="scikit-learn copy of the StatLib data; > 20,000 rows, subsampled"),
+         note="scikit-learn copy of the StatLib data (scikit-learn checks its hash); > 20,000 rows, subsampled"),
 ]
 
 
@@ -452,9 +426,6 @@ def smoke_dataset(name: str) -> Dataset:
                    categorical, classes, f"smoke-{name}")
 
 
-SMOKE = [Spec(n, t, "", lambda raw: None, smoke=True) for n, t in
-         [("smoke_xor", "classification"), ("smoke_pair", "regression"),
-          ("smoke_mixed", "classification"), ("smoke_diabetes", "regression")]]
-
-DATASETS = {spec.name: spec for spec in SPECS + SMOKE}
-ALL = [spec.name for spec in SPECS]  # what experiments mean by datasets = "all"
+SMOKE = {"smoke_xor", "smoke_pair", "smoke_mixed", "smoke_diabetes"}  # built in memory, for tests
+DATASETS = {spec.name: spec for spec in SPECS}
+ALL = list(DATASETS)  # what experiments mean by datasets = "all"

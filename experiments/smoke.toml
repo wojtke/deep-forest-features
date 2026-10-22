@@ -1,7 +1,6 @@
 # Smoke test: every method end to end on tiny built-in data in about a minute. Not a result.
 datasets = ["smoke_xor", "smoke_pair", "smoke_mixed", "smoke_diabetes"]
-methods = ["base", "random_xx", "target_xx", "residual_xx", "xp_mi", "nonlinear", "monotone",
-           "combined", "rf", "rf_target_xx", "lightgbm"]
+methods = "all"  # the 11 methods of plan Table 1
 seeds = [0]
 outer_folds = 2
 

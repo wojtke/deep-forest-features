@@ -7,15 +7,13 @@ never used to fit anything, so no model is kept and every layer's test predictio
 predictions and each added column is the mean of its values computed from each fold model's
 predictions (plan §3).
 """
-from __future__ import annotations
-
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 from sklearn.metrics import balanced_accuracy_score
 
-from .data import inner_folds
+from .data import inner_split
 from .features import Outputs, components, k_products
 from .forest import grow_forest
 from .prep import Binner
@@ -86,13 +84,6 @@ def depth_rule(scores: list[float], task: str, delta: float, patience: int) -> t
     return best, wait >= patience
 
 
-def _type_sums(outs: list, n_rf: int, which: int) -> np.ndarray | None:
-    """(n, 2) per-type sums of tree statistics (which = 1: predictions, 2: squares)."""
-    if outs[0][which] is None:
-        return None
-    return np.column_stack([sum(o[which] for o in outs[:n_rf]), sum(o[which] for o in outs[n_rf:])])
-
-
 def new_columns(fitted: list, xs: np.ndarray, prev: Outputs | None) -> list[np.ndarray]:
     """Raw columns a layer adds for training rows: the previous OOF predictions P (from layer 2)
     and every fitted component's columns."""
@@ -109,36 +100,32 @@ def new_columns_test(fitted: list, xs: np.ndarray, prev: list[Outputs]) -> list[
     return [np.mean([o.P for o in prev], 0)] + [np.mean([c.transform(xs, o) for o in prev], 0) for c in fitted]
 
 
-def fit_predict(xs_tr, y_tr, groups_tr, xs_te, *, method: str, task: str, n_classes: int, origin, dummy,
-                keys: tuple, cfg: CascadeConfig) -> Result:
+def fit_predict(xs_tr, y_tr, groups_tr, xs_te, *, method: str, task: str, n_classes: int, keys: tuple,
+                cfg: CascadeConfig) -> Result:
     """Train the cascade on (xs_tr, y_tr) and predict xs_te at every layer.
 
     xs_*: preprocessed, unbinned features (products are computed from these). keys: (seed,
     dataset hash, outer fold) for the seed streams."""
-    n_tr, width = len(y_tr), n_classes if task == "classification" else 1
-    folds = inner_folds(y_tr, groups_tr, task, cfg.oof_folds, seed_for(*keys, INNER))
-    fold_of = np.empty(n_tr, dtype=np.int8)
-    for f, (_, va) in enumerate(folds):
-        fold_of[va] = f
+    regression, width = task == "regression", n_classes if task == "classification" else 1
+    fold_of, folds = inner_split(y_tr, groups_tr, task, cfg.oof_folds, seed_for(*keys, INNER))
     x_binner = Binner(cfg.n_bins).fit(xs_tr)  # X binned once, as DF21
     xb_tr, xb_te = x_binner.transform(xs_tr), x_binner.transform(xs_te)
     k = k_products(xs_tr.shape[1], cfg.k_mode)
     kinds = ["rf"] * cfg.n_rf + ["erf"] * cfg.n_erf
-    trees = (cfg.n_rf * cfg.n_trees, cfg.n_erf * cfg.n_trees)
     prev_tr: Outputs | None = None  # OOF outputs of the previous layer
     prev_te: list[Outputs] = []  # test outputs of each previous fold model
     layers, scores = [], []
     for layer in range(1, cfg.max_layers + 1):
         cpu = time.process_time()
-        forests_tr = np.empty((n_tr, len(kinds), width))
-        s1_tr, s2_tr = np.zeros((n_tr, 2)), np.zeros((n_tr, 2))
+        oof = np.empty((len(y_tr), len(kinds), width))
+        oof_sq = np.empty((len(y_tr), len(kinds))) if regression else None
         outputs_te, selections = [], []
         for f, (tr, va) in enumerate(folds):
             fitted, info = [], {}
             for name, comp in components(method, layer, k, cfg.activation):
+                stream = RANDOM_XX if name == "random_xx" else MI
                 comp.fit(xs_tr[tr], None if prev_tr is None else prev_tr.rows(tr), y_tr[tr], task=task,
-                         n_classes=n_classes, origin=origin, dummy=dummy,
-                         seed=seed_for(*keys, layer, f, RANDOM_XX if name == "xx_random" else MI))
+                         n_classes=n_classes, seed=seed_for(*keys, layer, f, stream))
                 fitted.append(comp)
                 info[name] = comp.info
             selections.append(info)
@@ -149,17 +136,17 @@ def fit_predict(xs_tr, y_tr, groups_tr, xs_te, *, method: str, task: str, n_clas
                 binner = Binner(cfg.n_bins).fit(a_tr[tr])  # new columns: this fold model's rows
                 z_tr = np.hstack([xb_tr, binner.transform(a_tr)])
                 z_te = np.hstack([xb_te, binner.transform(a_te)])
-            outs = [grow_forest(kind, task, cfg.n_trees, z_tr[tr], y_tr[tr], [z_tr[va], z_te], n_classes,
-                                seed_for(*keys, layer, f, TREES, j)) for j, kind in enumerate(kinds)]
-            out_va, out_te = [o[0] for o in outs], [o[1] for o in outs]
-            forests_tr[va] = np.stack([o[0] for o in out_va], 1)
-            if task == "regression":
-                s1_tr[va], s2_tr[va] = _type_sums(out_va, cfg.n_rf, 1), _type_sums(out_va, cfg.n_rf, 2)
-            outputs_te.append(Outputs(np.stack([o[0] for o in out_te], 1), cfg.n_rf, _type_sums(out_te, cfg.n_rf, 1),
-                                      _type_sums(out_te, cfg.n_rf, 2), trees))
-        regression = task == "regression"
-        prev_tr = Outputs(forests_tr, cfg.n_rf, s1_tr if regression else None, s2_tr if regression else None, trees)
-        prev_te = outputs_te
+            test = Outputs(np.empty((len(xs_te), len(kinds), width)), cfg.n_rf,
+                           np.empty((len(xs_te), len(kinds))) if regression else None)
+            for j, kind in enumerate(kinds):
+                (va_mean, va_sq), (te_mean, te_sq) = grow_forest(
+                    kind, task, cfg.n_trees, z_tr[tr], y_tr[tr], [z_tr[va], z_te], n_classes,
+                    seed_for(*keys, layer, f, TREES, j))
+                oof[va, j], test.forests[:, j] = va_mean, te_mean
+                if regression:
+                    oof_sq[va, j], test.sq[:, j] = va_sq, te_sq
+            outputs_te.append(test)
+        prev_tr, prev_te = Outputs(oof, cfg.n_rf, oof_sq), outputs_te
         scores.append(depth_score(y_tr, prev_tr.mean(), task))
         test_pred = np.mean([o.mean() for o in outputs_te], 0)
         layers.append(Layer(test_pred, scores[-1], time.process_time() - cpu, selections))

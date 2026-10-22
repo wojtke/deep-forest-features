@@ -34,11 +34,13 @@ cascade = { n_bins = 0 }
 [[check]]
 name = "no_binning_relu"  # without binning, all three monotone activations are tried
 methods = ["monotone"]
+base = "no_binning"  # compare with the base cascade without binning
 cascade = { n_bins = 0, activation = "relu" }
 
 [[check]]
 name = "no_binning_gelu"
 methods = ["monotone"]
+base = "no_binning"
 cascade = { n_bins = 0, activation = "gelu" }
 
 [[check]]

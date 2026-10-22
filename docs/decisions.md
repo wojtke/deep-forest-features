@@ -19,7 +19,7 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Layer outputs passed on | every forest's output, concatenated (RF first); binary keeps both columns | DF21 `_layer.py` L201–254 | – |
 | Layer predictions for training rows | 3-fold out-of-fold, same folds at every layer | plan (Zhou & Feng 2019); DF21 uses out-of-bag | 5 folds |
 | Test-row inputs | P = mean of the fold models' predictions; each added column = mean of its values from each fold model | plan §3 | – |
-| Binning | 255 percentile bins, midpoint thresholds, exact for ≤255 distinct values | DF21 `_binner.py` L23–86 | none |
+| Binning | 255 percentile bins, midpoint thresholds, exact for ≤255 distinct values | DF21 `_binner.py` L23–86 | no binning |
 | Binner scope | X once on all outer-training rows; P and added columns per fold model on its training rows | ours, adapted from DF21 (X once; new columns per layer) | – |
 | Depth rule | a layer improves if it beats the best so far by 1e-5; stop after 2 layers without improvement; at most 20 layers, the first included | DF21 `cascade.py` L718–747, L930–962 | – |
 | Depth score | balanced accuracy / mean squared error | plan (DF21: accuracy / MSE) | – |
@@ -30,9 +30,9 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 
 | Setting | Value | Source | Sensitivity check |
 |---|---|---|---|
-| Products K | min(d, ⌊d(d−1)/8⌋), d = encoded features of the outer fold | plan (ours) | ⌈K/2⌉, 2K |
+| Products K | min(d, ⌊d(d−1)/8⌋), d = encoded features of the outer fold | ours, stated in the plan | ⌈K/2⌉, 2K |
 | Candidates | XX: x_i x_j, i < j; XP: x_i p_{t,c} with p_t the mean of the type's two forests | plan | – |
-| Excluded candidates | constant on the fold model's training rows (variance ≤ 1e-12), incl. two dummies of one categorical | plan; threshold ours | – |
+| Excluded candidates | constant on the fold model's training rows (variance ≤ 1e-12); this removes products of two dummies of one categorical, which are always 0 | plan; threshold ours | – |
 | Fewer candidates than K | all are taken | ours | – |
 | Target / residual score | max over classes of \|corr\| with y_c or y_c − p̄_c; p̄ = mean of all forests' OOF outputs, original scale | plan | – |
 | Undefined correlation, ties | 0; ties broken by candidate order (stable sort) | ours | – |
@@ -49,10 +49,11 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Missing values | median / mode imputation; one-hot encoding; numeric standardization, all fitted on outer-training rows | plan §4 |
 | Preprocessing scope | once per outer training set, reused by the inner folds of every method | ours (no labels involved) |
 | Constant columns | dropped | ours |
-| Row cap | 20,000; whole groups, class-stratified, seed 0; at most 20,000 rows | plan; procedure ours |
-| Related rows | identical inputs, plus the dataset's group key (patient, material, day) | plan §5 |
+| Row cap | at most 20,000 rows: whole groups, class-stratified, seed 0 (19,999 for the classification sets) | plan; procedure ours |
+| Rows without any feature value | dropped (330 Air Quality rows with every sensor missing) | ours |
+| Related rows | identical inputs, plus the dataset's group key: patient (Parkinsons), recording (Cardiotocography), material (Superconductivity), day (Air Quality, Bike Sharing); rows with a missing key are not joined by it | plan §5 |
 | Outer validation | 5 folds × seeds 0, 1, 2; StratifiedGroupKFold / GroupKFold with shuffling | plan; seeds ours |
-| Excluded columns | ids, timestamps, sampling weights, columns revealing the target; per dataset in `datasets.py` and data/AUDIT.md | plan §4; plan-silent cases marked PROPOSED in the audit |
+| Excluded columns | ids, timestamps, sampling weights, columns revealing the target; per dataset in `datasets.py` and data/AUDIT.md | plan §4; plan-silent cases (other targets, time columns, coding) marked PROPOSED in the audit |
 
 ## Baselines (`src/dfx/baselines.py`)
 
@@ -72,7 +73,9 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Relative reduction | (ē_ref − ē) / max(ē_ref, ē), 0 if both are 0 | plan §5 |
 | Tests | two-sided Wilcoxon signed-rank over the 32 datasets; Holm over H1, H2a, H2b, H3, H4, H5; supported iff adjusted p < 0.05 and median > 0; H2 needs H2a and H2b | plan §5 |
 | Zero differences | scipy default (`zero_method="wilcox"` drops them); their number is reported; all zero → not supported | scipy default; ours |
-| Descriptive | by task, combined, every method vs base, Friedman + Nemenyi CD diagram, common depth, XP–P correlation, sensitivity | plan §5; Nemenyi from Demšar (2006) |
+| Descriptive | overall and by task: every method vs base (incl. combined), mean ranks, Friedman + Nemenyi CD diagram; common depth; XP–P correlation; per-dataset mean ± sd of every metric and CPU time | plan §5; Nemenyi from Demšar (2006) |
+| Sensitivity | each check vs the main run of the same method (seed 0), and each variant vs base under the same setting (the check's own base, the no-binning base for ReLU/GELU, or main base for the K checks); no tests | plan §5; comparison design ours |
+| Complete case | the hypothesis tests run only when every run of the six compared methods is finished | ours |
 
 ## Notes
 

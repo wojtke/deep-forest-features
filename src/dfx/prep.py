@@ -1,6 +1,4 @@
 """Preprocessing fitted on training rows only (plan §4) and the DF21 percentile binner."""
-from __future__ import annotations
-
 import numpy as np
 
 
@@ -8,12 +6,11 @@ class Preprocessor:
     """Median / mode imputation, one-hot encoding of categorical columns, standardization of
     numeric ones. Fitted on outer-training rows only (plan §4); every method reuses the same fit.
 
-    Unseen categories become all-zero dummies. Columns constant on the training rows are dropped
-    (ours). `origin[j]` is the raw column behind encoded column j; `dummy[j]` marks one-hot
-    columns, which stay 0/1.
+    Unseen categories become all-zero dummies, which stay 0/1. Columns constant on the training
+    rows are dropped (ours). `width` is the number of encoded columns, d in the plan.
     """
 
-    def fit(self, X: np.ndarray, categorical: np.ndarray) -> "Preprocessor":
+    def fit(self, X: np.ndarray, categorical: np.ndarray):
         self.parts = []
         for j in range(X.shape[1]):
             seen = X[~np.isnan(X[:, j]), j]
@@ -27,9 +24,7 @@ class Preprocessor:
                 filled = np.where(np.isnan(X[:, j]), np.median(seen), X[:, j])
                 if filled.std() > 0:
                     self.parts.append((j, "num", np.median(seen), (filled.mean(), filled.std())))
-        widths = [len(extra) if kind == "cat" else 1 for _, kind, _, extra in self.parts]
-        self.origin = np.repeat([p[0] for p in self.parts], widths).astype(int)
-        self.dummy = np.repeat([p[1] == "cat" for p in self.parts], widths).astype(bool)
+        self.width = sum(len(extra) if kind == "cat" else 1 for _, kind, _, extra in self.parts)
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -54,7 +49,7 @@ class Binner:
     def __init__(self, n_bins: int = 255):
         self.n_bins = n_bins
 
-    def fit(self, Z: np.ndarray) -> "Binner":
+    def fit(self, Z: np.ndarray):
         self.edges = []
         if self.n_bins:
             for col in np.asarray(Z, dtype=float).T:
