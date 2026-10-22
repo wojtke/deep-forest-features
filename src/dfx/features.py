@@ -33,19 +33,24 @@ def k_products(d: int, mode: str = "base") -> int:
     return {"base": k, "half": -(-k // 2), "double": 2 * k}[mode]
 
 
+def _by_type(a: np.ndarray) -> np.ndarray:
+    """(n, F, ...) -> (n, 2, ...): the mean over the RF forests (first half) and the ERF forests."""
+    half = a.shape[1] // 2
+    return np.stack([a[:, :half].mean(1), a[:, half:].mean(1)], 1)
+
+
 @dataclass
 class Outputs:
     """One layer's outputs for a set of rows, original scale.
 
-    forests: (n, F, C) output of each forest, RF forests first (classification: class
-    probabilities; regression: C = 1). sq: (n, F) mean squared tree prediction of each forest
-    (regression only)."""
+    forests: (n, F, C) output of each forest, the RF forests first, then as many ERF forests
+    (classification: class probabilities; regression: C = 1). sq: (n, F) mean squared tree
+    prediction of each forest (regression only)."""
     forests: np.ndarray
-    n_rf: int
     sq: np.ndarray | None = None
 
     def rows(self, idx) -> "Outputs":
-        return Outputs(self.forests[idx], self.n_rf, None if self.sq is None else self.sq[idx])
+        return Outputs(self.forests[idx], None if self.sq is None else self.sq[idx])
 
     @property
     def P(self) -> np.ndarray:
@@ -58,13 +63,12 @@ class Outputs:
 
     def type_means(self) -> np.ndarray:
         """(n, 2, C): p_RF and p_ERF, each the mean of that type's forests."""
-        return np.stack([self.forests[:, :self.n_rf].mean(1), self.forests[:, self.n_rf:].mean(1)], 1)
+        return _by_type(self.forests)
 
     def tree_std(self) -> np.ndarray:
         """(n, 2) standard deviation (ddof 0) of the tree predictions pooled within each type
         (all forests have the same number of trees)."""
-        sq = np.column_stack([self.sq[:, :self.n_rf].mean(1), self.sq[:, self.n_rf:].mean(1)])
-        return np.sqrt(np.maximum(sq - self.type_means()[:, :, 0] ** 2, 0))
+        return np.sqrt(np.maximum(_by_type(self.sq) - self.type_means()[:, :, 0] ** 2, 0))
 
 
 def _abs_corr(values: np.ndarray, targets: np.ndarray) -> np.ndarray:
@@ -83,39 +87,40 @@ def _chunked(fn, idx: np.ndarray) -> np.ndarray:
 
 
 class Products:
-    """K products x_i x_j (XX) or x_i p_{t,c} (XP), chosen on training rows (plan §3).
+    """K products x_i x_j (XX) or x_i p_{t,c} (XP), chosen on one fold model's training rows (plan §3).
 
     selector: "random" (redrawn for every layer and fold model), "target" (max_c |corr| with
     y_c), "residual" (max_c |corr| with the layer error y_c - p̄_c; equals target without a
     previous layer) or "mi" (mutual information with y, 3 neighbours). Candidates constant on the
     training rows, e.g. products of two dummies of one categorical feature, are dropped first.
+    XP uses p_t, the mean of the type's forests; in regression it is standardized on the training rows.
     """
 
     def __init__(self, kind: str, selector: str, k: int):
         self.kind, self.selector, self.k = kind, selector, k
 
     def _right(self, Xs, prev):
+        """Second factors: the features (XX) or the scaled p_{t,c} columns (XP)."""
         if self.kind == "xx":
             return Xs
-        p = prev.type_means().reshape(len(Xs), -1)  # (n, 2C)
-        return (p - self.p_mean) / self.p_scale if self.regression else p
+        return (prev.type_means().reshape(len(Xs), -1) - self.shift) / self.scale
 
     def fit(self, Xs, prev, y, *, task, n_classes, seed):
-        self.regression = task == "regression"
         d = Xs.shape[1]
         if self.kind == "xx":
-            self.a, self.b = np.triu_indices(d, 1)
+            i, j = np.triu_indices(d, 1)
         else:
-            p = prev.type_means().reshape(len(Xs), -1)
-            self.p_mean, self.p_scale = p.mean(0), np.where(p.std(0) > 0, p.std(0), 1.0)
-            self.a, self.b = np.repeat(np.arange(d), p.shape[1]), np.tile(np.arange(p.shape[1]), d)
+            p = prev.type_means().reshape(len(Xs), -1)  # (n, 2C)
+            regression = task == "regression"
+            self.shift = p.mean(0) if regression else 0.0
+            self.scale = np.where(p.std(0) > 0, p.std(0), 1.0) if regression else 1.0
+            i, j = np.repeat(np.arange(d), p.shape[1]), np.tile(np.arange(p.shape[1]), d)
         right = self._right(Xs, prev)
 
-        def values(idx):
-            return Xs[:, self.a[idx]] * right[:, self.b[idx]]
+        def values(idx):  # the candidate products idx
+            return Xs[:, i[idx]] * right[:, j[idx]]
 
-        candidates = np.arange(len(self.a))
-        pool = candidates[_chunked(lambda c: values(c).var(0) > CONSTANT, candidates).astype(bool)]
+        pool = np.flatnonzero(_chunked(lambda c: values(c).var(0) > CONSTANT, np.arange(len(i))))
         k = min(self.k, len(pool))
         if self.selector == "random":
             chosen = np.random.default_rng(seed).choice(pool, k, replace=False)
@@ -129,16 +134,16 @@ class Products:
                     target = target - prev.mean()
                 score = _chunked(lambda c: _abs_corr(values(c), target), pool)
             chosen = pool[np.argsort(-score, kind="stable")[:k]]
-        chosen = np.sort(chosen)
-        self.a, self.b = self.a[chosen], self.b[chosen]
-        self.info = {"pairs": np.column_stack([self.a, self.b]).tolist(), "pool": len(pool)}
+        chosen = np.sort(chosen)  # candidate order, so the column order never depends on the scores
+        self.i, self.j = i[chosen], j[chosen]
+        self.info = {"pairs": np.column_stack([self.i, self.j]).tolist(), "pool": len(pool)}
         if self.kind == "xp" and k:
             # Plan §3: how strongly the chosen XP products repeat the prediction columns.
             self.info["max_corr_with_P"] = _abs_corr(self.transform(Xs, prev), prev.P).round(4).tolist()
         return self
 
     def transform(self, Xs, prev):
-        return Xs[:, self.a] * self._right(Xs, prev)[:, self.b]
+        return Xs[:, self.i] * self._right(Xs, prev)[:, self.j]
 
 
 class NonLinear:
@@ -173,29 +178,21 @@ class Monotone:
         self.act = ACTIVATIONS[activation]
 
     def fit(self, Xs, prev, y, *, task, **_):
-        self.lo = self.scale = None
+        self.lo, self.scale = 0.0, 1.0
         if task == "regression":
             P = prev.P
-            self.lo, span = P.min(0), P.max(0) - P.min(0)
-            self.scale = np.where(span > 0, span, 1.0)
+            span = P.max(0) - P.min(0)
+            self.lo, self.scale = P.min(0), np.where(span > 0, span, 1.0)
         return self
 
     def transform(self, Xs, prev):
-        P = prev.P
-        return self.act(P if self.lo is None else (P - self.lo) / self.scale)
+        return self.act((prev.P - self.lo) / self.scale)
 
 
 def components(method: str, layer: int, k: int, activation: str) -> list[tuple[str, object]]:
     """Fresh, unfitted components of `method` that are active in `layer`: XX products enter
     every layer, the others start at layer 2 (plan Table 1)."""
-    out = []
-    for name in CASCADE_METHODS[method]:
-        if name.endswith("_xx"):
-            out.append((name, Products("xx", name.removesuffix("_xx"), k)))
-        elif layer >= 2 and name == "xp_mi":
-            out.append((name, Products("xp", "mi", k)))
-        elif layer >= 2 and name == "nonlinear":
-            out.append((name, NonLinear()))
-        elif layer >= 2 and name == "monotone":
-            out.append((name, Monotone(activation)))
-    return out
+    make = {"random_xx": Products("xx", "random", k), "target_xx": Products("xx", "target", k),
+            "residual_xx": Products("xx", "residual", k), "xp_mi": Products("xp", "mi", k),
+            "nonlinear": NonLinear(), "monotone": Monotone(activation)}
+    return [(name, make[name]) for name in CASCADE_METHODS[method] if name.endswith("_xx") or layer >= 2]

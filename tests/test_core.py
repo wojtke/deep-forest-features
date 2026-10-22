@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dfx import cascade as cascade_module
 from dfx import forest as forest_module
 from dfx.cascade import CascadeConfig, depth_rule, fit_predict, new_columns_test
 from dfx.data import fold_ids, inner_split, related_groups, subsample
@@ -30,7 +31,14 @@ def cascade(method, X, y, task="classification", X_te=None, cfg=TINY):
 
 
 def outputs(probs_rf, probs_erf):
-    return Outputs(np.stack([probs_rf, probs_rf, probs_erf, probs_erf], 1), n_rf=2)
+    """Classification outputs: both RF forests give probs_rf, both ERF forests probs_erf."""
+    return Outputs(np.stack([probs_rf, probs_rf, probs_erf, probs_erf], 1))
+
+
+def regression_outputs(rf_mean, rf_sq):
+    """One row; both RF forests predict `rf_mean` with mean squared tree prediction `rf_sq`."""
+    forests = np.array([[[rf_mean], [rf_mean], [0.0], [0.0]]])
+    return Outputs(forests, np.array([[rf_sq, rf_sq, 0.0, 0.0]]))
 
 
 # --- data ---------------------------------------------------------------------------------------
@@ -69,7 +77,7 @@ def test_subsample_keeps_whole_groups_and_proportions():
 def test_preprocessing_uses_training_rows_only():
     X = np.array([[0.0, 1.0], [1.0, 2.0], [0.0, np.nan], [1.0, 4.0]])
     prep = Preprocessor().fit(X, np.array([True, False]))
-    assert prep.width == 3  # two dummies, one numeric column
+    assert prep.transform(X).shape[1] == 3  # two dummies, one numeric column
     out = prep.transform(np.array([[7.0, 100.0]]))  # unseen category, extreme value
     assert out[0, :2].tolist() == [0.0, 0.0]
     assert np.isclose(prep.transform(X)[:, 2].mean(), 0)  # standardized on training rows
@@ -96,14 +104,15 @@ def test_trees_see_distinct_bootstrap_rows_and_sqrt_features(monkeypatch):
 
     class Recording(forest_module.DecisionTreeClassifier):
         def fit(self, X, y, **kw):
-            seen.append((len(X), len(np.unique(X, axis=0)), self.max_features, self.splitter))
+            seen.append({"rows": len(X), "distinct": len(np.unique(X, axis=0)), "features": self.max_features,
+                         "splitter": self.splitter})
             return super().fit(X, y, **kw)
 
     monkeypatch.setattr(forest_module, "DecisionTreeClassifier", Recording)
     X, y = problem()
     [(pred, _)] = grow_forest("erf", "classification", 5, X, y, [X], 3, seed=0)  # 3 classes, one unseen
-    assert all(rows == distinct < len(X) for rows, distinct, *_ in seen)
-    assert all(mf == "sqrt" and sp == "random" for *_, mf, sp in seen)
+    assert all(t["rows"] == t["distinct"] < len(X) for t in seen)
+    assert all(t["features"] == "sqrt" and t["splitter"] == "random" for t in seen)
     assert pred.shape == (len(X), 3) and np.allclose(pred[:, 2], 0) and np.allclose(pred.sum(1), 1)
 
 
@@ -129,7 +138,7 @@ def test_residual_selection_uses_the_layer_error():
     X, _ = problem("regression", n=600, d=4)
     first, second = X[:, 0] * X[:, 1], X[:, 2] * X[:, 3]
     y = first + 0.5 * second
-    prev = Outputs(np.repeat(first[:, None, None], 4, axis=1), n_rf=2)  # the layer already predicts `first`
+    prev = Outputs(np.repeat(first[:, None, None], 4, axis=1))  # the layer already predicts `first`
     pick = {s: Products("xx", s, 1).fit(X, prev, y, task="regression", n_classes=1, seed=0).info["pairs"]
             for s in ("target", "residual")}
     assert pick == {"target": [[0, 1]], "residual": [[2, 3]]}
@@ -139,12 +148,6 @@ def test_entropy_and_disagreement_by_hand():
     out = outputs(np.array([[0.5, 0.5]]), np.array([[1.0, 0.0]]))
     h_rf, h_erf, d = NonLinear().fit(None, out, None).transform(None, out)[0]
     assert np.isclose(h_rf, np.log(2)) and h_erf == 0 and np.isclose(d, 1.0)
-
-
-def regression_outputs(rf_mean, rf_sq):
-    """One row; both RF forests predict `rf_mean` with mean squared tree prediction `rf_sq`."""
-    forests = np.array([[[rf_mean], [rf_mean], [0.0], [0.0]]])
-    return Outputs(forests, 2, np.array([[rf_sq, rf_sq, 0.0, 0.0]]))
 
 
 def test_regression_uncertainty_is_the_pooled_tree_std():
@@ -164,8 +167,8 @@ def test_test_rows_average_columns_not_predictions():
 
 
 def test_fitted_scalers_are_applied_unchanged_to_test_rows():
-    train, test = regression_outputs(0.0, 1.0), regression_outputs(10.0, 101.0)
-    train = Outputs(np.concatenate([train.forests, test.forests * 0.5]), 2, np.concatenate([train.sq, test.sq]))
+    train = Outputs(np.array([[0.0, 0, 0, 0], [5.0, 5, 0, 0]])[:, :, None])  # two rows
+    test = regression_outputs(10.0, 101.0)
     mono = Monotone("relu").fit(None, train, None, task="regression")  # min 0, max 5 per column
     np.testing.assert_allclose(mono.transform(None, test)[0, :2], [2.0, 2.0])  # (10 - 0) / 5, not refitted
     xs = np.ones((2, 1))
@@ -177,8 +180,9 @@ def test_fitted_scalers_are_applied_unchanged_to_test_rows():
 
 def test_variants_match_the_base_cascade_where_inputs_coincide():
     X, y = problem()
-    layer1 = {m: cascade(m, X, y).layers[0] for m in ("base", "nonlinear", "monotone", "xp_mi", "target_xx",
-                                                       "residual_xx")}
+    one = CascadeConfig(n_trees=4, max_layers=1)
+    layer1 = {m: cascade(m, X, y, cfg=one).layers[0]
+              for m in ("base", "nonlinear", "monotone", "xp_mi", "target_xx", "residual_xx")}
     for m in ("nonlinear", "monotone", "xp_mi"):
         np.testing.assert_array_equal(layer1[m].test_pred, layer1["base"].test_pred)
     np.testing.assert_array_equal(layer1["residual_xx"].test_pred, layer1["target_xx"].test_pred)
@@ -209,8 +213,6 @@ def test_selection_sees_only_the_fold_models_training_rows():
 
 
 def test_new_columns_are_binned_on_the_fold_models_training_rows(monkeypatch):
-    import dfx.cascade
-
     fitted_rows = []
 
     class Recording(Binner):
@@ -218,7 +220,7 @@ def test_new_columns_are_binned_on_the_fold_models_training_rows(monkeypatch):
             fitted_rows.append(len(Z))
             return super().fit(Z)
 
-    monkeypatch.setattr(dfx.cascade, "Binner", Recording)
+    monkeypatch.setattr(cascade_module, "Binner", Recording)
     X, y = problem()
     result = cascade("residual_xx", X, y, cfg=CascadeConfig(n_trees=2, max_layers=2, patience=5))
     train_sizes = [int((result.inner_folds != f).sum()) for f in range(3)]

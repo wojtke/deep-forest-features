@@ -10,10 +10,10 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 
 | Setting | Value | Source | Sensitivity check |
 |---|---|---|---|
-| Forests per layer | 2 RF + 2 ERF | DF21 `cascade.py` L1337–1360 (`n_estimators=2`), doubled in `_layer.py` L74 | 4 + 4 (Zhou & Feng 2019) |
+| Forests per layer | 2 RF + 2 ERF (`n_forests` = 2 per type) | DF21 `cascade.py` L1337–1360 (`n_estimators=2`), doubled in `_layer.py` L74 | 4 + 4 (Zhou & Feng 2019) |
 | Trees per forest | 100, fully grown, min_samples_leaf 1 | DF21 | 500 (Zhou & Feng 2019) |
 | Features per split | √m, in classification and regression | DF21 `tree/tree.py` L245–247 | – |
-| ERF | random thresholds, √m features (ExtraTrees style) | DF21 `forest.py` | – |
+| ERF | random thresholds (ExtraTrees style) | DF21 `forest.py` | – |
 | Bootstrap | both forest types; each tree fit on the distinct drawn rows, unweighted | DF21 `forest.py` L117–129 | – |
 | Split criterion | gini / squared error | DF21 | – |
 | Layer outputs passed on | every forest's output, concatenated (RF first); binary keeps both columns | DF21 `_layer.py` L201–254 | – |
@@ -24,13 +24,13 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Depth rule | a layer improves if it beats the best so far by 1e-5; stop after 2 layers without improvement; at most 20 layers, the first included | DF21 `cascade.py` L718–747, L930–962 | – |
 | Depth score | balanced accuracy / mean squared error | plan (DF21: accuracy / MSE) | – |
 | Output | mean of the 4 forests × 3 fold models of the best layer | plan; DF21 keeps the last layer if the 20-layer cap is hit right after a non-improving layer | – |
-| Seeds | `SeedSequence([seed, crc32(dataset), outer fold, layer, inner fold, stream, index])`, independent of the method | ours | – |
+| Seeds | inside a task: `SeedSequence([seed, crc32(dataset), outer fold, layer, inner fold, stream, index])` (`cascade.seed_for`), independent of the method; outer splits: seeds 0, 1, 2 (`experiments/main.toml`); 20,000-row subsample: seed 0 (`data.SUBSAMPLE_SEED`) | ours | – |
 
 ## Added columns (`src/dfx/features.py`)
 
 | Setting | Value | Source | Sensitivity check |
 |---|---|---|---|
-| Products K | min(d, ⌊d(d−1)/8⌋), d = encoded features of the outer fold | ours, stated in the plan | ⌈K/2⌉, 2K |
+| Products K | min(d, ⌊d(d−1)/8⌋), d = encoded features of the outer fold | plan (our rule) | ⌈K/2⌉, 2K |
 | Candidates | XX: x_i x_j, i < j; XP: x_i p_{t,c} with p_t the mean of the type's two forests | plan | – |
 | Excluded candidates | constant on the fold model's training rows (variance ≤ 1e-12); this removes products of two dummies of one categorical, which are always 0 | plan; threshold ours | – |
 | Fewer candidates than K | all are taken | ours | – |
@@ -46,14 +46,14 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 
 | Setting | Value | Source |
 |---|---|---|
-| Missing values | median / mode imputation; one-hot encoding; numeric standardization, all fitted on outer-training rows | plan §4 |
+| Preprocessing | median / mode imputation; one-hot encoding; numeric standardization, all fitted on outer-training rows | plan §4 |
 | Preprocessing scope | once per outer training set, reused by the inner folds of every method | ours (no labels involved) |
 | Constant columns | dropped | ours |
-| Row cap | at most 20,000 rows: whole groups, class-stratified, seed 0 (19,999 for the classification sets) | plan; procedure ours |
+| Row cap | at most 20,000 rows: whole groups, class-stratified (19,999 for the classification sets) | plan; procedure ours |
 | Rows without any feature value | dropped (330 Air Quality rows with every sensor missing) | ours |
 | Related rows | identical inputs, plus the dataset's group key: patient (Parkinsons), recording (Cardiotocography), material (Superconductivity), day (Air Quality, Bike Sharing); rows with a missing key are not joined by it | plan §5 |
-| Outer validation | 5 folds × seeds 0, 1, 2; StratifiedGroupKFold / GroupKFold with shuffling | plan; seeds ours |
-| Excluded columns | ids, timestamps, sampling weights, columns revealing the target; per dataset in `datasets.py` and data/AUDIT.md | plan §4; plan-silent cases (other targets, time columns, coding) marked PROPOSED in the audit |
+| Outer validation | 5 folds × 3 seeds; StratifiedGroupKFold / GroupKFold with shuffling | plan; seeds ours |
+| Excluded columns | ids, timestamps, sampling weights, columns revealing the target; per dataset in `datasets.py` and docs/data-audit.md | plan §4; plan-silent cases (other targets, time columns, coding) marked PROPOSED in the audit |
 
 ## Baselines (`src/dfx/baselines.py`)
 
@@ -62,7 +62,7 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | RF | 400 trees, same forest code and binning as a cascade layer | plan (400 = trees of one layer); binning ours |
 | RF + target-XX | K target-chosen XX products on outer-training rows | plan |
 | LightGBM search | 10 random settings: learning rate 0.01–0.3 and L2 0.1–10 log-uniform, max depth 3–8, row and column subsampling 0.6–1 uniform | plan ranges; distributions ours |
-| LightGBM training | ≤ 1,000 trees, early stopping on LightGBM's default metric (log-loss / L2), patience 50, `subsample_freq=1`, `num_leaves` 31 | plan; default metric (user decision 22.10); patience **ours, not sourced**; num_leaves LightGBM default |
+| LightGBM training | ≤ 1,000 trees, early stopping on LightGBM's default metric (log-loss / L2), patience 50, `subsample_freq=1`, `num_leaves` 31 | plan; default metric (ours, 22.10.2026); patience **ours, not sourced**; num_leaves LightGBM default |
 | LightGBM choice and refit | best mean inner-fold primary metric on the cascade's 3 inner folds; refit on all outer-training rows with the rounded mean best iteration | plan; refit rule ours |
 
 ## Analysis (`src/dfx/report.py`)
@@ -75,9 +75,9 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 | Zero differences | scipy default (`zero_method="wilcox"` drops them); their number is reported; all zero → not supported | scipy default; ours |
 | Descriptive | overall and by task: every method vs base (incl. combined), mean ranks, Friedman + Nemenyi CD diagram; common depth; XP–P correlation; per-dataset mean ± sd of every metric and CPU time | plan §5; Nemenyi from Demšar (2006) |
 | Sensitivity | each check vs the main run of the same method (seed 0), and each variant vs base under the same setting (the check's own base, the no-binning base for ReLU/GELU, or main base for the K checks); no tests | plan §5; comparison design ours |
-| Complete case | the hypothesis tests run only when every run of the six compared methods is finished | ours |
+| Complete case | the hypothesis tests run only when every run of the 7 methods in the six comparisons is finished; an interim report compares only runs every method finished | ours |
 
-## Notes
+## Caveats
 
 - ReLU is the identity on [0, 1], so in the no-binning check its columns copy P. That still tests
   whether more weight for P among the columns tried at a split helps, which is the plan's rationale.

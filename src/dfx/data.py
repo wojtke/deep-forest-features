@@ -2,7 +2,8 @@
 
 Each dataset is a `Spec` in `datasets.py`. `prepare()` turns its raw archive into
 `data/prepared/<name>.npz`: features with NaN for missing values (categorical columns as integer
-codes), the target, related-row groups and the original row numbers.
+codes), the target, related-row groups and the original row numbers. `dfx data` also writes
+docs/data-audit.md.
 """
 import hashlib
 import json
@@ -17,6 +18,9 @@ import pandas as pd
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
+
+from .features import k_products
+from .prep import Preprocessor
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
@@ -36,9 +40,8 @@ class Spec:
     drop: tuple[str, ...] = ()  # ids, timestamps, weights and columns that reveal the target
     group: str | None = None  # rows with equal values here are related (plan §5)
     categorical: tuple[str, ...] = ()  # numeric-coded categoricals; text columns always are
-    missing: tuple = ()  # extra missing-value markers, e.g. -200 in Air Quality
     plan: tuple[int, int] | None = None  # rows x features in plan Table 2
-    note: str = ""  # one line for data/AUDIT.md
+    note: str = ""  # one line for docs/data-audit.md
 
 
 @dataclass
@@ -59,14 +62,6 @@ class Dataset:
         return len(self.classes) if self.task == "classification" else 1
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def download(spec: Spec) -> Path:
     """Fetch the archive once into data/raw/<name>/ and check its pinned hash."""
     folder = DATA / "raw" / spec.name
@@ -79,7 +74,8 @@ def download(spec: Spec) -> Path:
             with urllib.request.urlopen(request, timeout=120) as response, open(tmp, "wb") as f:
                 f.write(response.read())
             os.replace(tmp, path)
-        digest = sha256_file(path)
+        with open(path, "rb") as f:
+            digest = hashlib.file_digest(f, "sha256").hexdigest()
         if spec.sha256 is None:
             print(f"  {spec.name}: unpinned sha256 {digest}")
         elif digest != spec.sha256:
@@ -142,8 +138,6 @@ def prepare(spec: Spec) -> tuple[Dataset, dict]:
     unknown = [c for c in (*spec.drop, spec.target, spec.group, *spec.categorical) if c and c not in frame]
     if unknown:
         raise KeyError(f"{spec.name}: columns not in data: {unknown}; have {list(frame.columns)}")
-    for marker in spec.missing:
-        frame = frame.replace(marker, np.nan)
     target = frame[spec.target]
     if spec.task == "classification":
         target = target.astype("string").str.strip()
@@ -173,14 +167,11 @@ def prepare(spec: Spec) -> tuple[Dataset, dict]:
 
 def save(data: Dataset, facts: dict) -> None:
     """Write data/prepared/<name>.npz and a JSON with metadata and audit facts."""
-    from .features import k_products
-    from .prep import Preprocessor
-
     folder = DATA / "prepared"
     folder.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(folder / f"{data.name}.npz", X=data.X, y=data.y, groups=data.groups,
                         row_ids=data.row_ids, categorical=data.categorical)
-    d = Preprocessor().fit(data.X, data.categorical).width
+    d = Preprocessor().fit(data.X, data.categorical).transform(data.X).shape[1]
     facts = {**facts, "d": d, "K": k_products(d)}
     if data.task == "classification":
         facts["class_counts"] = np.bincount(data.y, minlength=len(data.classes)).tolist()
@@ -192,7 +183,7 @@ def save(data: Dataset, facts: dict) -> None:
 
 
 def write_audit() -> Path:
-    """data/AUDIT.md: one row per prepared dataset, compared with plan Table 2."""
+    """docs/data-audit.md: one row per prepared dataset, compared with plan Table 2."""
     from .datasets import ALL, DATASETS
 
     head = ("| dataset | task | target | plan rows x feat | raw rows x feat | dropped rows | rows used | "
@@ -221,7 +212,7 @@ def write_audit() -> Path:
                  f["categorical"], f["d"], f["K"], f"{f['groups']:,}", summary, f"{f['missing_pct']:.1f}",
                  ", ".join(f["excluded"]) or "-", spec.note]
         lines.append("| " + " | ".join(map(str, cells)) + " |")
-    path = DATA / "AUDIT.md"
+    path = ROOT / "docs" / "data-audit.md"
     path.write_text("\n".join(lines) + "\n")
     return path
 

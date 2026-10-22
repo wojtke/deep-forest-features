@@ -30,17 +30,6 @@ class LGBMConfig:
     reg_lambda: tuple = (0.1, 10.0)  # plan; log-uniform (ours)
 
 
-def _forest(xs_tr, y_tr, xs_te, extra_tr, extra_te, *, task, n_classes, cfg, seed):
-    """One RF on binned [X | extra]; binners fitted on all outer-training rows (like layer 1)."""
-    x_binner = Binner(cfg.n_bins).fit(xs_tr)
-    z_tr, z_te = x_binner.transform(xs_tr), x_binner.transform(xs_te)
-    if extra_tr.shape[1]:
-        b = Binner(cfg.n_bins).fit(extra_tr)
-        z_tr, z_te = np.hstack([z_tr, b.transform(extra_tr)]), np.hstack([z_te, b.transform(extra_te)])
-    [(pred, _)] = grow_forest("rf", task, RF_TREES, z_tr, y_tr, [z_te], n_classes, seed)
-    return pred
-
-
 def _predict(model, x, task, n_classes):
     if task == "regression":
         return model.predict(x)[:, None]
@@ -76,7 +65,7 @@ def _lightgbm(xs_tr, y_tr, groups_tr, xs_te, *, task, n_classes, keys, lgbm: LGB
             model.fit(xs_tr[tr], y_tr[tr], eval_X=(xs_tr[va],), eval_y=(y_tr[va],),
                       callbacks=[lgb.early_stopping(lgbm.patience, verbose=False)])
             scores.append(metrics(y_tr[va], _predict(model, xs_tr[va], task, n_classes), task)[PRIMARY[task]])
-            trees.append(max(1, int(model.best_iteration_ or lgbm.max_trees)))
+            trees.append(model.best_iteration_ or lgbm.max_trees)
         tried.append({"setting": setting, "score": float(np.mean(scores)), "trees": int(round(np.mean(trees)))})
     best = (max if task == "classification" else min)(tried, key=lambda t: t["score"])
     model = model_class(n_estimators=best["trees"], **best["setting"], **fixed).fit(xs_tr, y_tr)
@@ -86,18 +75,22 @@ def _lightgbm(xs_tr, y_tr, groups_tr, xs_te, *, task, n_classes, keys, lgbm: LGB
 def run_baseline(method: str, xs_tr, y_tr, groups_tr, xs_te, *, task, n_classes, keys,
                  cfg: CascadeConfig, lgbm: LGBMConfig) -> Result:
     cpu = time.process_time()
-    common = dict(task=task, n_classes=n_classes, cfg=cfg, seed=seed_for(*keys, SINGLE_RF))
     info, selections, fold_of = {}, [], None
-    if method == "rf":
-        pred = _forest(xs_tr, y_tr, xs_te, xs_tr[:, :0], xs_te[:, :0], **common)
-    elif method == "rf_target_xx":
-        k = k_products(xs_tr.shape[1], cfg.k_mode)
-        products = Products("xx", "target", k).fit(xs_tr, None, y_tr, task=task, n_classes=n_classes, seed=0)
-        pred = _forest(xs_tr, y_tr, xs_te, products.transform(xs_tr, None), products.transform(xs_te, None), **common)
-        selections, info = [{"target_xx": products.info}], {"K": k}
-    elif method == "lightgbm":
+    if method == "lightgbm":
         pred, info, fold_of = _lightgbm(xs_tr, y_tr, groups_tr, xs_te, task=task, n_classes=n_classes, keys=keys,
                                         lgbm=lgbm)
+    elif method in ("rf", "rf_target_xx"):
+        # One RF on binned [X | products]; binners fitted on all outer-training rows, like layer 1.
+        binner = Binner(cfg.n_bins).fit(xs_tr)
+        z_tr, z_te = binner.transform(xs_tr), binner.transform(xs_te)
+        if method == "rf_target_xx":
+            k = k_products(xs_tr.shape[1], cfg.k_mode)
+            products = Products("xx", "target", k).fit(xs_tr, None, y_tr, task=task, n_classes=n_classes, seed=0)
+            a_tr, a_te = products.transform(xs_tr, None), products.transform(xs_te, None)
+            binner = Binner(cfg.n_bins).fit(a_tr)
+            z_tr, z_te = np.hstack([z_tr, binner.transform(a_tr)]), np.hstack([z_te, binner.transform(a_te)])
+            selections, info = [{"target_xx": products.info}], {"K": k}
+        [(pred, _)] = grow_forest("rf", task, RF_TREES, z_tr, y_tr, [z_te], n_classes, seed_for(*keys, SINGLE_RF))
     else:
         raise KeyError(method)
     return Result([Layer(pred, None, time.process_time() - cpu, selections)], 1, fold_of, info)

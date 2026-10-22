@@ -14,20 +14,19 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .baselines import BASELINES
 from .features import CASCADE_METHODS
 from .metrics import PRIMARY, SECONDARY, error
-from .run import experiment_settings, fingerprints, state, tasks
+from .run import METHODS, experiment_settings, fingerprints, state, tasks
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-CASCADES = list(CASCADE_METHODS)
-METHODS = CASCADES + list(BASELINES)
 # Plan §5: one Holm family of six paired comparisons; H2 needs both H2a and H2b.
 HYPOTHESES = [("H1", "residual_xx", "base"), ("H2a", "residual_xx", "random_xx"),
               ("H2b", "residual_xx", "target_xx"), ("H3", "xp_mi", "base"), ("H4", "nonlinear", "base"),
               ("H5", "monotone", "base")]
+# Descriptive: every method vs the base cascade, plus H2a and H2b.
+DESCRIPTIVE = [(m, m, "base") for m in METHODS if m != "base"] + HYPOTHESES[1:3]
 ALPHA = 0.05
 
 
@@ -131,14 +130,15 @@ def ranks(errors: pd.DataFrame) -> tuple[pd.Series, dict]:
 def common_depth(layers: pd.DataFrame) -> pd.DataFrame:
     """Median relative error reduction vs the base cascade at each depth that every cascade
     variant reached in a run (plan §3); columns: variants, plus the number of datasets."""
-    cas = layers[layers.method.isin(CASCADES)]
+    cas = layers[layers.method.isin(list(CASCADE_METHODS))]
     reach = cas.groupby(["dataset", "seed", "fold", "method"])["layer"].max().unstack()
     cas = cas.join(reach.dropna().min(axis=1).rename("common"), on=["dataset", "seed", "fold"])
     out = {}
     for depth, at in cas[cas.layer <= cas.common].groupby("layer"):
         err = mean_errors(at)
         if "base" in err:
-            out[depth] = {m: float(reductions(err, m, "base").median()) for m in CASCADES if m in err and m != "base"}
+            out[depth] = {m: float(reductions(err, m, "base").median())
+                          for m in CASCADE_METHODS if m in err and m != "base"}
             out[depth]["datasets"] = len(err)
     return pd.DataFrame(out).T.rename_axis("depth")
 
@@ -149,7 +149,8 @@ def per_dataset(runs: pd.DataFrame, task: str, metric: str) -> pd.DataFrame:
     if sub.empty or metric not in sub:
         return pd.DataFrame()
     g = sub.groupby(["dataset", "method"])[metric]
-    table = (g.mean().map("{:.4g}".format) + " ± " + g.std(ddof=1).fillna(0).map("{:.2g}".format)).unstack()
+    sd = g.std(ddof=1)  # undefined for a single run
+    table = (g.mean().map("{:.4g}".format) + sd.map(" ± {:.2g}".format).where(sd.notna(), "")).unstack()
     return table[[m for m in METHODS if m in table]]
 
 
@@ -296,17 +297,13 @@ def _main_report(s: Summary, runs: pd.DataFrame, layers: pd.DataFrame, missing: 
         s.text("![relative reductions](reductions.png)")
     else:
         s.text("## Hypotheses (plan §5)", "", "Not tested: some runs of the compared methods are unfinished.")
-    vs_base = [(m, m, "base") for m in METHODS if m != "base"]
     for scope in ("all", "classification", "regression"):
         sub = errors if scope == "all" else errors[task_of.reindex(errors.index) == scope]
         if sub.empty:
             continue
         suffix = "" if scope == "all" else f": {scope}"
-        if scope != "all":
-            s.table(f"hypotheses_{scope}", f"Hypotheses by task{suffix} (descriptive)",
-                    comparisons(sub, HYPOTHESES, family=False))
-        s.table(f"vs_base_{scope}", f"Every method vs the base cascade{suffix} (descriptive)",
-                comparisons(sub, vs_base, family=False))
+        s.table(f"comparisons_{scope}", f"Every method vs the base cascade, and H2a/H2b{suffix} (descriptive)",
+                comparisons(sub, DESCRIPTIVE, family=False), "Two-sided Wilcoxon p without Holm's correction.")
         mean_rank, fr = ranks(sub)
         if fr["methods"] > 2:
             s.table(f"ranks_{scope}", f"Mean ranks{suffix}", mean_rank.rename("mean rank").to_frame(),
@@ -329,7 +326,7 @@ def report(experiment: str, results: Path, out: Path, allow_incomplete: bool = F
         raise SystemExit(f"{experiment}: no finished runs in {results}")
     if missing.sum() and not allow_incomplete:
         raise SystemExit(f"{experiment}: {missing.sum()} tasks not finished ({dict(missing)}); see "
-                         f"`dfx status {experiment}`, or pass --allow-incomplete for an interim report")
+                         f"`dfx run {experiment} --dry-run`, or pass --allow-incomplete for an interim report")
     runs.to_csv(results / experiment / "runs.csv", index=False)
     layers.to_csv(results / experiment / "layers.csv", index=False)
     if missing.sum():
@@ -350,8 +347,8 @@ def report(experiment: str, results: Path, out: Path, allow_incomplete: bool = F
                 stable, "Same method, dataset, seed and fold in the reference experiment.")
     else:
         _main_report(s, runs, layers, missing)
-    for task in ("classification", "regression"):
-        for metric in (PRIMARY[task], *SECONDARY[task], "cpu_seconds"):
-            s.table(f"per_dataset_{task}_{metric}", f"Per dataset: {metric} mean ± sd ({task})",
-                    per_dataset(runs, task, metric), index=True)
-    print(f"wrote {results / experiment / 'runs.csv'} and {s.write()}")
+        for task in ("classification", "regression"):
+            for metric in (PRIMARY[task], *SECONDARY[task], "cpu_seconds"):
+                s.table(f"per_dataset_{task}_{metric}", f"Per dataset: {metric} mean ± sd ({task})",
+                        per_dataset(runs, task, metric), index=True)
+    print(f"wrote {results / experiment}/runs.csv, layers.csv and {s.write()}")

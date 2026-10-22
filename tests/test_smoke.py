@@ -1,15 +1,14 @@
 """End to end: the smoke experiment in two worker processes, determinism, resume and the report."""
 import json
-from importlib.metadata import version
 
 from dfx.report import report
-from dfx.run import PACKAGES, _git, code_hash, fingerprints, run_experiment, run_task, state, tasks
+from dfx.run import fingerprints, run_experiment, run_task, state, tasks
 
 TIMINGS = ("cpu_seconds", "wall_seconds", "worker_peak_rss_mb")
 
 
 def without_timings(record):
-    record = {k: v for k, v in record.items() if k not in TIMINGS}
+    record = {k: v for k, v in json.loads(json.dumps(record)).items() if k not in TIMINGS}  # as stored
     record["layers"] = [{k: v for k, v in layer.items() if k != "cpu_seconds"} for layer in record["layers"]]
     return record
 
@@ -24,9 +23,8 @@ def test_smoke_experiment_end_to_end(tmp_path):
     assert all(r["metrics"] == r["layers"][r["best_layer"] - 1]["metrics"] for r in records.values())
 
     # Every method on one dataset, run again in this process, gives the same results as the pool.
-    meta = {"code": code_hash(), "git": _git(), "versions": {p: version(p) for p in PACKAGES}}
     for t in [t for t in selected if t.dataset == "smoke_pair" and t.fold == 0]:
-        assert without_timings(records[t]) == without_timings(run_task(t, tmp_path / "again", fps[t], meta))
+        assert without_timings(records[t]) == without_timings(run_task(t, tmp_path / "again", fps[t]))
 
     # A result with another fingerprint is stale and is re-run; finished ones are skipped.
     task = next(t for t in selected if t.method == "residual_xx")

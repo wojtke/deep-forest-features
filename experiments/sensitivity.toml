@@ -19,7 +19,7 @@ cascade = { k_mode = "double" }
 [[check]]
 name = "forests_4x4"  # Zhou & Feng (2019): 4 + 4 forests per layer
 methods = ["base", "residual_xx", "nonlinear", "monotone"]
-cascade = { n_rf = 4, n_erf = 4 }
+cascade = { n_forests = 4 }
 
 [[check]]
 name = "trees_500"  # Zhou & Feng (2019): 500 trees per forest

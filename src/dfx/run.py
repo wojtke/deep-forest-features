@@ -64,8 +64,8 @@ class Task:
     seed: int
     fold: int
     outer_folds: int
-    cascade: str = "{}"  # JSON of CascadeConfig overrides
-    lightgbm: str = "{}"  # JSON of LGBMConfig overrides
+    cascade: CascadeConfig = CascadeConfig()
+    lightgbm: LGBMConfig = LGBMConfig()
 
     def path(self, results: Path) -> Path:
         return results / self.experiment / self.check / self.dataset / self.method / f"s{self.seed}-f{self.fold}"
@@ -107,8 +107,8 @@ def tasks(name: str, datasets=None, methods=None, seeds=None, folds=None, checks
     _require("check", checks, [c["name"] for c in s["check"]])
     out = []
     for check in s["check"]:
-        cascade = json.dumps({**s["cascade"], **check.get("cascade", {})}, sort_keys=True)
-        lightgbm = json.dumps(s["lightgbm"], sort_keys=True)
+        cascade = CascadeConfig(**{**s["cascade"], **check.get("cascade", {})})
+        lightgbm = LGBMConfig(**s["lightgbm"])
         for dataset in s["datasets"]:
             for method in check["methods"]:
                 for seed in s["seeds"]:
@@ -129,7 +129,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def run_task(task: Task, results: Path, fingerprint: str, meta: dict) -> dict:
+def run_task(task: Task, results: Path, fingerprint: str) -> dict:
     """Fit one method on one outer training fold and score it on the outer test fold."""
     wall, cpu = time.time(), time.process_time()
     data = load(task.dataset)
@@ -137,20 +137,19 @@ def run_task(task: Task, results: Path, fingerprint: str, meta: dict) -> dict:
     train, test = np.flatnonzero(fold_of != task.fold), np.flatnonzero(fold_of == task.fold)
     prep = Preprocessor().fit(data.X[train], data.categorical)  # outer-training rows only
     xs_tr, xs_te = prep.transform(data.X[train]), prep.transform(data.X[test])
-    common = dict(task=data.task, n_classes=data.n_classes, cfg=CascadeConfig(**json.loads(task.cascade)),
+    common = dict(task=data.task, n_classes=data.n_classes, cfg=task.cascade,
                   keys=(task.seed, zlib.crc32(task.dataset.encode()), task.fold))
     if task.method in CASCADE_METHODS:
         out = fit_predict(xs_tr, data.y[train], data.groups[train], xs_te, method=task.method, **common)
     else:
         out = run_baseline(task.method, xs_tr, data.y[train], data.groups[train], xs_te,
-                           lgbm=LGBMConfig(**json.loads(task.lightgbm)), **common)
+                           lgbm=task.lightgbm, **common)
     y_te = data.y[test]
     layers = [{"layer": i + 1, "oof_score": layer.oof_score, "metrics": metrics(y_te, layer.test_pred, data.task),
                "cpu_seconds": round(layer.cpu_seconds, 3), "selections": layer.selections}
               for i, layer in enumerate(out.layers)]
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 2**10)
-    record = {"task": asdict(task) | {"cascade": json.loads(task.cascade), "lightgbm": json.loads(task.lightgbm)},
-              "fingerprint": fingerprint, "git": meta["git"], "versions": meta["versions"], "task_type": data.task,
+    record = {"task": asdict(task), "fingerprint": fingerprint, "task_type": data.task,
               "n_train": len(train), "n_test": len(test), "n_classes": data.n_classes, "d": xs_tr.shape[1],
               "best_layer": out.best, "n_layers": len(out.layers), "metrics": layers[out.best - 1]["metrics"],
               "layers": layers, "info": out.info, "cpu_seconds": round(time.process_time() - cpu, 3),
@@ -174,11 +173,11 @@ def _write_error(task: Task, results: Path, text: str) -> None:
     path.write_text(text)
 
 
-def _safe_run(task: Task, results: Path, fingerprint: str, meta: dict) -> dict:
+def _safe_run(task: Task, results: Path, fingerprint: str, code: str) -> dict:
     try:
-        if code_hash() != meta["code"]:
+        if code_hash() != code:
             raise RuntimeError("code or uv.lock changed since this run started; start it again")
-        record = run_task(task, results, fingerprint, meta)
+        record = run_task(task, results, fingerprint)
         task.path(results).with_suffix(".error.txt").unlink(missing_ok=True)
         return {"ok": True, "wall": record["wall_seconds"], "layers": record["n_layers"]}
     except Exception:
@@ -208,9 +207,7 @@ def fingerprints(selected: list[Task], create: bool = False) -> tuple[dict[Task,
         key = (t.dataset, t.seed, t.outer_folds)
         if key not in splits:
             splits[key] = outer_split(datasets[t.dataset], t.seed, t.outer_folds, create)[1]
-        payload = {"task": asdict(t), "cascade": asdict(CascadeConfig(**json.loads(t.cascade))),
-                   "lightgbm": asdict(LGBMConfig(**json.loads(t.lightgbm))), "code": code,
-                   "data": datasets[t.dataset].sha256, "split": splits[key]}
+        payload = {"task": asdict(t), "code": code, "data": datasets[t.dataset].sha256, "split": splits[key]}
         out[t] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return out, {name: len(d.y) * np.sqrt(d.X.shape[1]) for name, d in datasets.items()}
 
@@ -227,18 +224,18 @@ def state(task: Task, results: Path, fingerprint: str) -> str:
     return "failed" if base.with_suffix(".error.txt").exists() else "missing"
 
 
-def write_manifest(name: str, results: Path, meta: dict) -> None:
+def write_manifest(name: str, results: Path, code: str) -> None:
     """results/<name>/manifest.json: environment and data of the whole experiment."""
     manifest = {"experiment": name, "settings": (EXPERIMENTS / f"{name}.toml").read_text(),
-                "python": platform.python_version(), "platform": platform.platform(), "packages": meta["versions"],
-                "code_and_lock_sha256": meta["code"], "git": meta["git"],
+                "python": platform.python_version(), "platform": platform.platform(),
+                "packages": {p: version(p) for p in PACKAGES}, "code_and_lock_sha256": code, "git": _git(),
                 "datasets": {n: load(n).sha256 for n in experiment_settings(name)["datasets"]}}
     folder = results / name
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
 
 
-def _run_pool(queue: list[Task], workers: int, results: Path, fps: dict, meta: dict, report) -> list[Task]:
+def _run_pool(queue: list[Task], workers: int, results: Path, fps: dict, code: str, log) -> list[Task]:
     """Run tasks from `queue` (consumed) with at most one task per worker in flight. Returns []
     when the queue is done, or the tasks that were running when a worker process died."""
     running = {}
@@ -247,9 +244,9 @@ def _run_pool(queue: list[Task], workers: int, results: Path, fps: dict, meta: d
             while queue or running:
                 while queue and len(running) < workers:
                     t = queue.pop(0)
-                    running[pool.submit(_safe_run, t, results, fps[t], meta)] = t
+                    running[pool.submit(_safe_run, t, results, fps[t], code)] = t
                 for future in wait(running, return_when=FIRST_COMPLETED)[0]:
-                    report(running[future], future.result())
+                    log(running[future], future.result())
                     del running[future]
     except BrokenProcessPool:
         return list(running.values())
@@ -261,23 +258,16 @@ def run_experiment(name, *, workers, results: Path, datasets=None, methods=None,
     selected = tasks(name, datasets, methods, seeds, folds, checks)
     fps, cost = fingerprints(selected, create=True)
     states = {t: state(t, results, fps[t]) for t in selected}
+    print_states(selected, states)
     todo = [t for t in selected if states[t] != "done"]
-    counts = {s: sum(v == s for v in states.values()) for s in ("done", "stale", "failed", "missing")}
-    print(f"{name}: {len(selected)} tasks selected; " + ", ".join(f"{v} {k}" for k, v in counts.items()), flush=True)
-    if counts["stale"]:
-        print("  stale = finished with other code, data or settings; they will be re-run", flush=True)
     if dry_run or not todo:
-        for t in todo[:20]:
-            print(f"  would run: {t.label()} ({states[t]})")
-        if len(todo) > 20:
-            print(f"  ... and {len(todo) - 20} more")
         return True
-    meta = {"code": code_hash(), "git": _git(), "versions": {p: version(p) for p in PACKAGES}}
-    write_manifest(name, results, meta)
+    code = code_hash()
+    write_manifest(name, results, code)
     todo.sort(key=lambda t: -cost[t.dataset] * {"rf": 0.2, "rf_target_xx": 0.2, "lightgbm": 0.4}.get(t.method, 1))
     failed, finished, start = [], 0, time.time()
 
-    def report(t, res):
+    def log(t, res):
         nonlocal finished
         finished += 1
         layers = f"{res.get('layers')} layer{'s' if res.get('layers') != 1 else ''}"
@@ -292,17 +282,17 @@ def run_experiment(name, *, workers, results: Path, datasets=None, methods=None,
     if workers == 1:
         _init_worker()
         for t in todo:
-            report(t, _safe_run(t, results, fps[t], meta))
+            log(t, _safe_run(t, results, fps[t], code))
     else:
         queue = list(todo)
         while queue:
-            for t in _run_pool(queue, workers, results, fps, meta, report):
+            for t in _run_pool(queue, workers, results, fps, code, log):
                 # A worker died while these ran; run each alone so a crash names its task.
                 print(f"a worker process died; re-running {t.label()} on its own", flush=True)
-                if _run_pool([t], 1, results, fps, meta, report):
+                if _run_pool([t], 1, results, fps, code, log):
                     message = "the worker process died while running this task (out of memory?)"
                     _write_error(t, results, message)
-                    report(t, {"ok": False, "error": message})
+                    log(t, {"ok": False, "error": message})
     print(f"{name}: {finished - len(failed)} finished, {len(failed)} failed, {(time.time() - start) / 60:.1f} min",
           flush=True)
     for t in failed:
@@ -310,15 +300,16 @@ def run_experiment(name, *, workers, results: Path, datasets=None, methods=None,
     return not failed
 
 
-def status(name: str, results: Path) -> None:
-    selected = tasks(name)
-    fps, _ = fingerprints(selected)
+def print_states(selected: list[Task], states: dict[Task, str]) -> None:
+    """Tasks per check and method: done, stale (finished with other code, data or settings; will be
+    re-run), failed (see <task>.error.txt) and missing."""
+    names = ("done", "stale", "failed", "missing")
     table: dict[tuple, dict] = {}
     for t in selected:
-        row = table.setdefault((t.check, t.method), {"done": 0, "stale": 0, "failed": 0, "missing": 0})
-        row[state(t, results, fps[t])] += 1
-    print(f"{'check':<16} {'method':<14} {'done':>6} {'stale':>6} {'failed':>6} {'missing':>8}")
-    for (check, method), row in table.items():
-        print(f"{check:<16} {method:<14} {row['done']:>6} {row['stale']:>6} {row['failed']:>6} {row['missing']:>8}")
-    total = {k: sum(r[k] for r in table.values()) for k in ("done", "stale", "failed", "missing")}
-    print(f"{'total':<31} {total['done']:>6} {total['stale']:>6} {total['failed']:>6} {total['missing']:>8}")
+        table.setdefault((t.check, t.method), dict.fromkeys(names, 0))[states[t]] += 1
+    total = {n: sum(row[n] for row in table.values()) for n in names}
+    print(f"{'check':<16} {'method':<14}" + "".join(f"{n:>8}" for n in names))
+    for (check, method), row in [*table.items(), (("total", ""), total)]:
+        print(f"{check:<16} {method:<14}" + "".join(f"{row[n]:>8}" for n in names), flush=True)
+    if total["stale"]:
+        print("stale = finished with other code, data or settings; they will be re-run", flush=True)

@@ -7,7 +7,7 @@ class Preprocessor:
     numeric ones. Fitted on outer-training rows only (plan §4); every method reuses the same fit.
 
     Unseen categories become all-zero dummies, which stay 0/1. Columns constant on the training
-    rows are dropped (ours). `width` is the number of encoded columns, d in the plan.
+    rows are dropped (ours).
     """
 
     def fit(self, X: np.ndarray, categorical: np.ndarray):
@@ -21,10 +21,10 @@ class Preprocessor:
                 if len(levels) > 1:
                     self.parts.append((j, "cat", levels[np.argmax(counts)], levels))
             else:
-                filled = np.where(np.isnan(X[:, j]), np.median(seen), X[:, j])
+                median = np.median(seen)
+                filled = np.where(np.isnan(X[:, j]), median, X[:, j])
                 if filled.std() > 0:
-                    self.parts.append((j, "num", np.median(seen), (filled.mean(), filled.std())))
-        self.width = sum(len(extra) if kind == "cat" else 1 for _, kind, _, extra in self.parts)
+                    self.parts.append((j, "num", median, (filled.mean(), filled.std())))
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:

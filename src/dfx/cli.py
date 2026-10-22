@@ -1,4 +1,4 @@
-"""Command line: `dfx data | run | status | report`. See README.md and `dfx <command> -h`."""
+"""Command line: `dfx data | run | report`. See README.md and `dfx <command> -h`."""
 import os
 
 # One thread per process, set before numpy is imported anywhere (workers inherit it).
@@ -42,12 +42,6 @@ def cmd_run(args) -> None:
     sys.exit(0 if ok else 1)
 
 
-def cmd_status(args) -> None:
-    from .run import status
-
-    status(args.experiment, Path(args.results))
-
-
 def cmd_report(args) -> None:
     from .report import report
 
@@ -59,7 +53,7 @@ def main(argv=None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     results = dict(default=str(ROOT / "results"), help="results folder (default: <repo>/results)")
 
-    p = sub.add_parser("data", help="download, prepare and split datasets; write data/AUDIT.md")
+    p = sub.add_parser("data", help="download, prepare and split datasets; write docs/data-audit.md")
     p.add_argument("names", nargs="*", help="dataset names (default: all 32)")
     p.set_defaults(func=cmd_data)
 
@@ -72,14 +66,9 @@ def main(argv=None) -> None:
     p.add_argument("--seeds", help="comma-separated subset, e.g. 0")
     p.add_argument("--folds", help="comma-separated outer fold indices, e.g. 0,1")
     p.add_argument("--checks", help="comma-separated sensitivity checks")
-    p.add_argument("--dry-run", action="store_true", help="list what would run")
+    p.add_argument("--dry-run", action="store_true", help="only count done, stale, failed and missing tasks")
     p.add_argument("--results", **results)
     p.set_defaults(func=cmd_run)
-
-    p = sub.add_parser("status", help="count done, stale, failed and missing tasks")
-    p.add_argument("experiment")
-    p.add_argument("--results", **results)
-    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("report", help="collect results, run the statistics, write tables and figures")
     p.add_argument("experiment")
