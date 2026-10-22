@@ -11,7 +11,8 @@ of the predictions.
 
 ## Quick start
 
-Needs [uv](https://docs.astral.sh/uv/). Every dependency is pinned in `uv.lock`.
+Needs [uv](https://docs.astral.sh/uv/). Every dependency is pinned in `uv.lock`. On macOS, LightGBM also
+needs OpenMP: `brew install libomp`.
 
 ```sh
 uv sync

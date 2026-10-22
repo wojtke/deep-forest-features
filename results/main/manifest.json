@@ -1,0 +1,26 @@
+{
+ "experiment": "main",
+ "updated": "2026-10-22T09:59:46+00:00",
+ "settings": "# Main experiment (plan \u00a75): every method on every dataset, 5 outer folds x 3 seeds = 15 runs each.\n# 32 datasets x 11 methods x 15 = 5,280 tasks. Settings not listed here are the defaults in\n# src/dfx/cascade.py (CascadeConfig) and src/dfx/baselines.py (LGBMConfig); see docs/decisions.md.\ndatasets = \"all\"\nmethods = [\"base\", \"random_xx\", \"target_xx\", \"residual_xx\", \"xp_mi\", \"nonlinear\", \"monotone\",\n           \"combined\", \"rf\", \"rf_target_xx\", \"lightgbm\"]\nseeds = [0, 1, 2]  # ours\nouter_folds = 5\n",
+ "python": "3.12.13",
+ "platform": "macOS-26.6.2-arm64-arm-64bit",
+ "packages": {
+  "numpy": "2.5.4",
+  "scipy": "1.18.1",
+  "scikit-learn": "1.9.1",
+  "pandas": "3.0.6",
+  "lightgbm": "4.7.0"
+ },
+ "uv_lock_sha256": "7c0e9c866e63fe67afed26cf802b30d7d2b5425af85d74458689f01e7ad50a91",
+ "code_sha256": "d304f42e146ad076baf970b2dee073f4746169cef94d0a53b85f044ad800bdb2",
+ "git": {
+  "commit": "46ac33bc296b3dd744748de1c6cebca210ac1c5b",
+  "dirty": false
+ },
+ "datasets": {
+  "spambase": "5840c7640a03890698813f96df4ec48c92388cfa5379d62b7de1449274c14737",
+  "vehicle": "3ea7a95bb473e3b5e8e5bd908d4ff1244663c5b535f6932730606614c7dab0b6",
+  "abalone": "db38c6f4ea5ca05262cda5c2560f5a4a590c483d0dcb8a4c7b0ed362ccf455be",
+  "wine_red": "efa3370c4e316437c20eeac154441d77fd6dd8d611bac04b671210cdb661cc4a"
+ }
+}

@@ -9,5 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - if: runner.os == 'macOS'
+        run: brew install libomp  # LightGBM needs OpenMP on macOS
       - run: uv sync --locked
       - run: uv run pytest
