@@ -1,0 +1,15 @@
+# Smoke test: every method end to end on tiny built-in data in about a minute. Not a result.
+datasets = ["smoke_xor", "smoke_pair", "smoke_mixed", "smoke_diabetes"]
+methods = ["base", "random_xx", "target_xx", "residual_xx", "xp_mi", "nonlinear", "monotone",
+           "combined", "rf", "rf_target_xx", "lightgbm"]
+seeds = [0]
+outer_folds = 2
+
+[cascade]
+n_trees = 8
+max_layers = 3
+
+[lightgbm]
+n_settings = 2
+max_trees = 50
+patience = 10

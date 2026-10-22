@@ -1,0 +1,8 @@
+# Main experiment (plan §5): every method on every dataset, 5 outer folds x 3 seeds = 15 runs each.
+# 32 datasets x 11 methods x 15 = 5,280 tasks. Settings not listed here are the defaults in
+# src/dfx/cascade.py (CascadeConfig) and src/dfx/baselines.py (LGBMConfig); see docs/decisions.md.
+datasets = "all"
+methods = ["base", "random_xx", "target_xx", "residual_xx", "xp_mi", "nonlinear", "monotone",
+           "combined", "rf", "rf_target_xx", "lightgbm"]
+seeds = [0, 1, 2]  # ours
+outer_folds = 5

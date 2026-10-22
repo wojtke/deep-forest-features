@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.DS_Store
+
+# Downloaded and prepared data (re-created by `dfx data`); the audit is committed.
+data/*
+!data/AUDIT.md
+
+# Per-run outputs are released as a tarball; collected summaries are committed.
+results/**/*.json
+results/**/*.npz
+results/**/*.error.txt
+results/**/*.tmp
+results/**/run.log
+!results/**/manifest.json

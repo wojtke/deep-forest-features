@@ -1,0 +1,47 @@
+# Sensitivity checks (plan §5, Table 3): one setting changed at a time, all datasets, one seed,
+# 5 outer folds. Descriptive only (no tests); each run is compared with the main-experiment run of
+# the same method, dataset, seed and fold. 24 configurations x 32 datasets x 5 folds = 3,840 tasks.
+datasets = "all"
+seeds = [0]
+outer_folds = 5
+reference = "main"
+
+[[check]]
+name = "k_half"  # ceil(K/2)
+methods = ["random_xx", "target_xx", "residual_xx"]
+cascade = { k_mode = "half" }
+
+[[check]]
+name = "k_double"  # 2K
+methods = ["random_xx", "target_xx", "residual_xx"]
+cascade = { k_mode = "double" }
+
+[[check]]
+name = "forests_4x4"  # Zhou & Feng (2019): 4 + 4 forests per layer
+methods = ["base", "residual_xx", "nonlinear", "monotone"]
+cascade = { n_rf = 4, n_erf = 4 }
+
+[[check]]
+name = "trees_500"  # Zhou & Feng (2019): 500 trees per forest
+methods = ["base", "residual_xx", "nonlinear", "monotone"]
+cascade = { n_trees = 500 }
+
+[[check]]
+name = "no_binning"
+methods = ["base", "residual_xx", "nonlinear", "monotone"]
+cascade = { n_bins = 0 }
+
+[[check]]
+name = "no_binning_relu"  # without binning, all three monotone activations are tried
+methods = ["monotone"]
+cascade = { n_bins = 0, activation = "relu" }
+
+[[check]]
+name = "no_binning_gelu"
+methods = ["monotone"]
+cascade = { n_bins = 0, activation = "gelu" }
+
+[[check]]
+name = "oof_5"  # 5 OOF folds instead of 3
+methods = ["base", "residual_xx", "nonlinear", "monotone"]
+cascade = { oof_folds = 5 }
