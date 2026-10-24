@@ -1,0 +1,7 @@
+# Positive control (exploratory, added 25.10.2026 after the main run; not in the plan): every method on the
+# two synthetic datasets with a pure interaction (src/dfx/datasets.py: smoke_xor, smoke_pair), with the
+# main settings. Products should help here if they help anywhere.
+datasets = ["smoke_xor", "smoke_pair"]
+methods = "all"
+seeds = [0, 1, 2]  # as in main.toml
+outer_folds = 5
