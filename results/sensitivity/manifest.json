@@ -1,0 +1,52 @@
+{
+ "experiment": "sensitivity",
+ "settings": "# Sensitivity checks (plan \u00a75, Table 3): one setting changed at a time, all datasets, one seed,\n# 5 outer folds. Descriptive only (no tests); each run is compared with the main-experiment run of\n# the same method, dataset, seed and fold. 24 configurations x 32 datasets x 5 folds = 3,840 tasks.\ndatasets = \"all\"\nseeds = [0]\nouter_folds = 5\nreference = \"main\"\n\n[[check]]\nname = \"k_half\"  # ceil(K/2)\nmethods = [\"random_xx\", \"target_xx\", \"residual_xx\"]\ncascade = { k_mode = \"half\" }\n\n[[check]]\nname = \"k_double\"  # 2K\nmethods = [\"random_xx\", \"target_xx\", \"residual_xx\"]\ncascade = { k_mode = \"double\" }\n\n[[check]]\nname = \"forests_4x4\"  # Zhou & Feng (2019): 4 + 4 forests per layer\nmethods = [\"base\", \"residual_xx\", \"nonlinear\", \"monotone\"]\ncascade = { n_forests = 4 }\n\n[[check]]\nname = \"trees_500\"  # Zhou & Feng (2019): 500 trees per forest\nmethods = [\"base\", \"residual_xx\", \"nonlinear\", \"monotone\"]\ncascade = { n_trees = 500 }\n\n[[check]]\nname = \"no_binning\"\nmethods = [\"base\", \"residual_xx\", \"nonlinear\", \"monotone\"]\ncascade = { n_bins = 0 }\n\n[[check]]\nname = \"no_binning_relu\"  # without binning, all three monotone activations are tried\nmethods = [\"monotone\"]\nbase = \"no_binning\"  # compare with the base cascade without binning\ncascade = { n_bins = 0, activation = \"relu\" }\n\n[[check]]\nname = \"no_binning_gelu\"\nmethods = [\"monotone\"]\nbase = \"no_binning\"\ncascade = { n_bins = 0, activation = \"gelu\" }\n\n[[check]]\nname = \"oof_5\"  # 5 OOF folds instead of 3\nmethods = [\"base\", \"residual_xx\", \"nonlinear\", \"monotone\"]\ncascade = { oof_folds = 5 }\n",
+ "python": "3.12.13",
+ "platform": "macOS-26.6.2-arm64-arm-64bit",
+ "packages": {
+  "numpy": "2.5.4",
+  "scipy": "1.18.1",
+  "scikit-learn": "1.9.1",
+  "pandas": "3.0.6",
+  "lightgbm": "4.7.0"
+ },
+ "code_and_lock_sha256": "7314dfef8084fa0702040377e2ba88c62d8cfc547e35433630b7a3d2f4b9f4c9",
+ "git": {
+  "commit": "aa55ecc718889ff41007389fbbb44b491c87498e",
+  "dirty": false
+ },
+ "datasets": {
+  "sonar": "8b1416bafa1d81f6a4f9c569f924d60beec07d81923aa107de5aee94ab767763",
+  "spambase": "5840c7640a03890698813f96df4ec48c92388cfa5379d62b7de1449274c14737",
+  "qsar_biodeg": "a33eda6e31d7c70891ff10ce95bd66484823c22f62aa23f6f0f58ba88b7d6795",
+  "steel_plates": "c4b1ad65322aa16811acdad7b1db256952f92d322b45d1587bab0e7fd3a7d3a7",
+  "vehicle": "3ea7a95bb473e3b5e8e5bd908d4ff1244663c5b535f6932730606614c7dab0b6",
+  "heart_statlog": "9d644d5d502ceb3940cee42ebc44a81298491fd730706fa60dbf880325c9e558",
+  "tictactoe": "c353dda0400234b9f21e85efac8fd45a8dbe3a4d405bb76dd14d7bd66905d997",
+  "page_blocks": "37d7f9734019200676d3eb5eaa9e8fcf3dd4963e8799e22000a07117e2fa9a1a",
+  "german_credit": "5d13d4e22d307b618d890f27fcffa94a247643d5309c50977eb22e9979b74b74",
+  "cardiotocography": "1519e4d452e314ed3c4acec280b5b8da25701427429f9c7a85bf6e5c8acedf9f",
+  "climate_crashes": "3570e5a8e093c4efea94483bdc42d86661aec3ffd564bd904e7cfb2fb265dbf8",
+  "phishing": "a46391f962febcd5e18bfdbf91d37e596d285a47019b204c89323ceaed0829e4",
+  "spectf": "2de206c112b3c2c72abdd7b2043e6ea417693318c37968ed58b2fa4a6e811410",
+  "credit_default": "1a26457c25e3216d58ab5d690cc4ac2df18bbdff55fc74c25fd677774b2d837e",
+  "bank_marketing": "8b067ecf7edb05789a1297ab3dba46dbbb35cb795ab0374862ce27459d2c2c4c",
+  "adult": "abf67a94357f873a9212419148a45bee066d772521330f1a917ab81854446561",
+  "abalone": "db38c6f4ea5ca05262cda5c2560f5a4a590c483d0dcb8a4c7b0ed362ccf455be",
+  "auto_mpg": "739752cd2b1736b8ec9c44c5ae969c0aeab84596c9151ba428095d83fc16f8c6",
+  "automobile": "2d212022e556f4d670aff1f457d5701b3576d93df2ff3c9f3545be9bce585a2b",
+  "communities": "30434c130b5f545e5fb24feb6d1e7c7a9de390464e88259344466b240bdd0a33",
+  "servo": "a869bd61db76b91552c22931d901a8c2c601677044331e09306f3db4bd5024e4",
+  "energy": "4aafea2e588ea5e037d89d663a1e631d96b4fc9055c56333e3015ae9e0789819",
+  "wine_red": "efa3370c4e316437c20eeac154441d77fd6dd8d611bac04b671210cdb661cc4a",
+  "concrete_slump": "8d54ea2621f66f9926431e4ccaa83b0ff9437a900f8ac13e9147c72cb116d1d1",
+  "real_estate": "bf17c2278ec765783a8f41d422739748fd960d124a06c1d9491ef654bc2523c0",
+  "parkinsons": "f67a5dcf668ff4f6bee570eccbe8cc70312998be11542b1f1475b3c29e3fc765",
+  "student_math": "215733762f1ad525e5d5a2b8fcf50070190afe02e2e2ec6f6341b7ea59abcdec",
+  "superconductivity": "d64d67be2a1c03146dda38d963171ffe2787deeb7778f389c21136a8e52ac0e8",
+  "bike_sharing": "29f513a0dce995eff92c38118e0cec63e048cba9046fdf3c28f038f9241593f3",
+  "ccpp": "dc6fa5cadaebe79efc27dd4cc1bbe05d52100f7d13fca20199d2cb9ef47d674e",
+  "air_quality": "56674dcfb2baf7d9c7eea1a73081853054afb6363f2e2737770043b339265c7e",
+  "california": "a3899845bb6e81a14d81f58ea2ad3b24a66219c3a64fa9e93b6adbfae52bc456"
+ }
+}

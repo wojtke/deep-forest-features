@@ -1,0 +1,22 @@
+{
+ "experiment": "positive",
+ "settings": "# Positive control (exploratory, added 25.10.2026 after the main run; not in the plan): every method on the\n# two synthetic datasets with a pure interaction (src/dfx/datasets.py: smoke_xor, smoke_pair), with the\n# main settings. Products should help here if they help anywhere.\ndatasets = [\"smoke_xor\", \"smoke_pair\"]\nmethods = \"all\"\nseeds = [0, 1, 2]  # as in main.toml\nouter_folds = 5\n",
+ "python": "3.12.13",
+ "platform": "macOS-26.6.2-arm64-arm-64bit",
+ "packages": {
+  "numpy": "2.5.4",
+  "scipy": "1.18.1",
+  "scikit-learn": "1.9.1",
+  "pandas": "3.0.6",
+  "lightgbm": "4.7.0"
+ },
+ "code_and_lock_sha256": "7314dfef8084fa0702040377e2ba88c62d8cfc547e35433630b7a3d2f4b9f4c9",
+ "git": {
+  "commit": "aa55ecc718889ff41007389fbbb44b491c87498e",
+  "dirty": false
+ },
+ "datasets": {
+  "smoke_xor": "smoke-smoke_xor",
+  "smoke_pair": "smoke-smoke_pair"
+ }
+}
