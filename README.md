@@ -22,15 +22,18 @@ uv run dfx run smoke     # every method on tiny built-in data, about 30 s (not a
 
 ```sh
 uv run dfx data                          # download the 32 datasets (sha256-pinned) -> docs/data-audit.md
-uv run dfx run main --workers 8          # 5,280 tasks, about 40 CPU-hours; interrupt and rerun to resume
-uv run dfx run sensitivity --workers 8   # 3,840 tasks, roughly 60 CPU-hours
+uv run dfx run main --workers 8          # 5,280 tasks, 38 CPU-hours; interrupt and rerun to resume
+uv run dfx run sensitivity --workers 8   # 3,840 tasks, 59 CPU-hours
+uv run dfx run positive                  # 330 tasks, 2 minutes: the positive control
 uv run dfx report main                   # statistics, tables and figures -> reports/main/
 uv run dfx report sensitivity
+uv run dfx report positive
 ```
 
 `dfx run` also takes `--datasets`, `--methods`, `--seeds`, `--folds` and `--checks` (comma-separated)
 to run a subset, `--dry-run` to only count done / stale / failed / missing tasks, and `--results DIR`
-for scratch runs. The CPU hours come from a one-fold pilot (22.10.2026).
+for scratch runs. CPU hours as measured on an Apple M4 (10 cores); the main run took 7.5 h on 8 workers,
+at most 0.7 GB each.
 
 ## What is compared
 
@@ -53,6 +56,11 @@ Each layer of the base cascade has 2 random forests (RF) and 2 extremely randomi
 K = min(d, ⌊d(d−1)/8⌋), where d is the number of features after one-hot encoding. The error is
 1 − balanced accuracy (classification) or RMSE (regression). Each hypothesis is a two-sided Wilcoxon
 signed-rank test over the 32 datasets, with Holm's correction over the six; H2 needs both H2a and H2b.
+
+Added after the main run, as exploratory: the report repeats the comparisons within each task, on
+other metrics (accuracy, ROC AUC, average precision, R²) and at fixed depths, with Hodges–Lehmann
+intervals (Analysis in [docs/decisions.md](docs/decisions.md)); `experiments/positive.toml` is a
+positive control: every method on two synthetic datasets with one planted interaction.
 
 - Every setting and its source (the plan, the DF21 source, a library default, or ours): [docs/decisions.md](docs/decisions.md).
 - What each dataset contributes and what is excluded: [docs/data-audit.md](docs/data-audit.md).
@@ -90,11 +98,13 @@ and the split. A rerun skips a task only if its fingerprint still matches. JSON 
 The NPZ holds `test_index` (rows of the prepared dataset), `y_true`, `pred_by_layer` (layers × test
 rows × classes) and, for cascades and LightGBM, `inner_folds` (each outer-training row's inner fold).
 
-`dfx report` writes `results/<experiment>/runs.csv`, `layers.csv` and `reports/<experiment>/`. These and
+`dfx report` writes `results/<experiment>/runs.csv`, `layers.csv` and `reports/<experiment>/`; it adds
+accuracy, ROC AUC, average precision and R², computed from the NPZ predictions. These and
 `manifest.json` (environment, commit, dataset hashes) are committed after each experiment.
 
 The per-run files are not in git; they will be attached to a GitHub release. To rebuild a report from
-them, extract the tarball into `results/` at the release's commit and run `dfx report`.
+them, extract the tarball into `results/` at the release's commit, run `uv run dfx data` (the report
+checks each result's data and split hashes), then `uv run dfx report <experiment>`.
 
 ## Reproducibility
 
@@ -119,7 +129,7 @@ src/dfx/
   run.py        experiment files -> tasks, worker pool, result files, resume
   report.py     statistics, tables, figures
   cli.py        the dfx command
-experiments/    main.toml, sensitivity.toml, smoke.toml: the tasks and their settings
+experiments/    main.toml, sensitivity.toml, positive.toml, smoke.toml: the tasks and their settings
 tests/          test_core.py (unit), test_smoke.py (end to end)
 scripts/        check_df21.py: comparison with the official DF21 package (own environment)
 docs/           plan.pdf, decisions.md, data-audit.md, df21-check.md
@@ -136,7 +146,7 @@ reports/        generated summaries, tables and figures
   code is not copied; `forest.py` and `prep.py` reimplement its forests and binning on scikit-learn.
 - Built on scikit-learn, LightGBM, NumPy, SciPy, pandas and matplotlib.
 - Datasets: the UCI Machine Learning Repository (CC BY 4.0) and California Housing via scikit-learn.
-  Sources are listed in `src/dfx/datasets.py` and docs/data-audit.md.
+  Sources are listed in `src/dfx/datasets.py`.
 
 ## AI assistance
 

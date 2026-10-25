@@ -69,11 +69,15 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 
 | Setting | Value | Source |
 |---|---|---|
-| Error | 1 − balanced accuracy, or RMSE, averaged over a dataset's 15 runs | plan §5 |
+| Error | 1 − balanced accuracy, or RMSE, averaged over a dataset's 15 runs; the means are rounded to 12 significant digits before comparing, so the same errors summed in another order tie (before 25.10.2026 one such tie, XP-MI vs base on German Credit, counted as a win) | plan §5; rounding ours |
 | Relative reduction | (ē_ref − ē) / max(ē_ref, ē), 0 if both are 0 | plan §5 |
 | Tests | two-sided Wilcoxon signed-rank over the 32 datasets; Holm over H1, H2a, H2b, H3, H4, H5; supported iff adjusted p < 0.05 and median > 0; H2 needs H2a and H2b | plan §5 |
 | Zero differences | scipy default (`zero_method="wilcox"` drops them); their number is reported; all zero → not supported | scipy default; ours |
-| Descriptive | overall and by task: every method vs base (incl. combined), mean ranks, Friedman + Nemenyi CD diagram; common depth; XP–P correlation; per-dataset mean ± sd of every metric and CPU time | plan §5; Nemenyi from Demšar (2006) |
+| Descriptive | overall and by task: the other methods vs base (incl. combined), mean ranks, Friedman + Nemenyi CD diagram; the six comparisons on every other metric, by task; common depth; XP–P correlation; per-dataset mean ± sd of every metric and CPU time | plan §5; Nemenyi from Demšar (2006); other metrics: instructor's feedback |
+| Post-hoc metrics | accuracy; ROC AUC and average precision (mAP), one-vs-rest and macro over the classes present in the test fold (so both classes of a binary task); R². Computed by `report.py` from the saved float32 test predictions of every layer, not in `metrics.py`, whose edit would re-run everything | instructor's feedback on the plan (23.10.2026); scikit-learn; averaging rule ours |
+| By task | the six comparisons within classification and within regression (16 datasets each), Holm over these 12; exploratory, decides no hypothesis | instructor's feedback; family ours |
+| Confidence intervals | Hodges–Lehmann estimate of each hypothesis's reduction and its 95% interval from the exact signed-rank distribution; zeros kept | Hollander, Wolfe & Chicken (2014), ch. 3; level 1 − α |
+| Fixed depth, depth rule | the six comparisons with every cascade cut at each depth that every cascade run trained (1–3); for base per depth: how often the rule picks it, the median gap between OOF and test error, and base at that depth vs base at its chosen layer | ours, after the results review of 23.10.2026 |
 | Sensitivity | each check vs the main run of the same method (seed 0), and each variant vs base under the same setting (the check's own base, the no-binning base for ReLU/GELU, or main base for the K checks); no tests | plan §5; comparison design ours |
 | Complete case | the hypothesis tests run only when every run of the 7 methods in the six comparisons is finished; an interim report compares only runs every method finished | ours |
 
@@ -81,9 +85,23 @@ DF21 line numbers were read from the v0.1.7 source on 22.10.2026.
 
 - ReLU is the identity on [0, 1], so in the no-binning check its columns copy P. That still tests
   whether more weight for P among the columns tried at a split helps, which is the plan's rationale.
-- With the same folds at every layer, OOF predictions on a fold model's training rows (layer ≥ 2)
-  come from models that saw its validation rows. The OOF depth score is therefore optimistic by
-  an unmeasured amount; outer test folds are unaffected. As in gcForest.
+- With the same folds at every layer (as in gcForest), OOF predictions on a fold model's training
+  rows (layer ≥ 2) come from models that saw its validation rows, which would make the OOF depth
+  score optimistic. Measured, the opposite dominates: the base cascade's test error is lower than
+  its OOF error, and more so at deeper layers (main report, *Depth rule*: a median 2–9% at layers
+  1–3). A probable cause, not verified: a test prediction averages three fold models, an OOF
+  prediction comes from one. The depth rule therefore undervalues deeper layers and stops early
+  (layer 2 beats the chosen layer on 19 of 32 datasets). Outer test folds are unaffected, and the
+  hypothesis comparisons are no better at fixed depths 1–3 (*fixed depth* table).
 - When the base cascade and a variant that adds columns only from layer 2 (XP-MI, non-linear,
   monotone) both stop at layer 1, their predictions are identical and the dataset contributes a
   zero difference.
+- LightGBM's early stopping and its choice of setting use the same inner validation folds, so the
+  inner scores are optimistic; the outer test folds are unaffected. The 1,000-tree cap binds in 6 of
+  480 chosen settings of the main run, which can only understate LightGBM.
+- Test predictions are saved as float32. Balanced accuracy recomputed from them differs from the
+  recorded value in 22 of 2,640 classification runs of the main run (≤ 0.008, ties in the argmax); the
+  primary metric is always the recorded one, the post-hoc metrics come from the saved predictions.
+- In 306 of 2,640 classification runs of the main run, some test row gives its true class probability
+  0 (mostly RF and RF + products on Page Blocks, Adult and Bank Marketing). scikit-learn's log-loss
+  clips it at float64 epsilon (about 36 per row), so log-loss there depends on the clip.

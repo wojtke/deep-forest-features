@@ -1,0 +1,30 @@
+\begin{tabular}{llllll}
+\toprule
+check & method & datasets & median\_reduction & wins & losses \\
+\midrule
+k\_half & random\_xx & 32 & 0.0059 & 20 & 11 \\
+k\_half & residual\_xx & 32 & 0.0027 & 19 & 12 \\
+k\_half & target\_xx & 32 & -0.0017 & 15 & 16 \\
+k\_double & random\_xx & 32 & -0.0016 & 15 & 17 \\
+k\_double & residual\_xx & 32 & -0.0026 & 13 & 19 \\
+k\_double & target\_xx & 32 & -0.0043 & 9 & 23 \\
+forests\_4x4 & base & 32 & -3.56e-06 & 16 & 16 \\
+forests\_4x4 & monotone & 32 & -3.56e-06 & 16 & 16 \\
+forests\_4x4 & nonlinear & 32 & -0.000378 & 15 & 17 \\
+forests\_4x4 & residual\_xx & 32 & 0.000134 & 16 & 16 \\
+trees\_500 & base & 32 & 0.000302 & 17 & 15 \\
+trees\_500 & monotone & 32 & 0.000178 & 17 & 15 \\
+trees\_500 & nonlinear & 32 & 0.000482 & 19 & 13 \\
+trees\_500 & residual\_xx & 32 & 0.001 & 19 & 13 \\
+no\_binning & base & 32 & 0.0011 & 18 & 13 \\
+no\_binning & monotone & 32 & 0.000128 & 16 & 15 \\
+no\_binning & nonlinear & 32 & 0.000143 & 16 & 15 \\
+no\_binning & residual\_xx & 32 & 0.0028 & 19 & 13 \\
+no\_binning\_relu & monotone & 32 & 0.000594 & 18 & 13 \\
+no\_binning\_gelu & monotone & 32 & 0.000539 & 19 & 12 \\
+oof\_5 & base & 32 & 0.0065 & 21 & 11 \\
+oof\_5 & monotone & 32 & 0.0077 & 24 & 8 \\
+oof\_5 & nonlinear & 32 & 0.0105 & 22 & 10 \\
+oof\_5 & residual\_xx & 32 & 0.0118 & 27 & 5 \\
+\bottomrule
+\end{tabular}

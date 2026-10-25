@@ -11,7 +11,8 @@ from dfx.data import fold_ids, inner_split, related_groups, subsample
 from dfx.features import Monotone, NonLinear, Outputs, Products, k_products
 from dfx.forest import grow_forest
 from dfx.prep import Binner, Preprocessor
-from dfx.report import holm, paired, relative_reduction
+from dfx.report import (comparisons, hodges_lehmann, holm, mean_errors, paired, post_hoc_metrics,
+                        relative_reduction)
 
 TINY = CascadeConfig(n_trees=4, max_layers=3)
 
@@ -245,6 +246,37 @@ def test_depth_rule_follows_df21():
 def test_relative_reduction_and_holm():
     np.testing.assert_allclose(relative_reduction([0.2, 0.0, 0.1], [0.1, 0.0, 0.2]), [0.5, 0.0, -0.5])
     np.testing.assert_allclose(holm([0.01, 0.04, 0.03]), [0.03, 0.06, 0.06])
+
+
+def test_mean_errors_tie_when_only_the_summation_order_differs():
+    runs = pd.DataFrame({"dataset": "a", "method": ["base", "x"], "error": [0.1 + 0.2 + 0.3, 0.6]})
+    assert comparisons(mean_errors(runs), [("t", "x", "base")], family=False).zeros.item() == 1
+
+
+def test_hodges_lehmann_interval_uses_the_exact_signed_rank_table():
+    x = np.random.default_rng(0).normal(size=10)
+    i, j = np.triu_indices(10)
+    walsh = np.sort((x[i] + x[j]) / 2)
+    # n = 10, two-sided 5%: the lower critical value of the signed-rank statistic is 8 (Wilcoxon tables).
+    assert hodges_lehmann(x) == (np.median(walsh), walsh[8], walsh[55 - 1 - 8])
+
+
+def test_post_hoc_metrics_match_scikit_learn():
+    from sklearn.metrics import average_precision_score, r2_score, roc_auc_score
+
+    rng = np.random.default_rng(0)
+    y, p = rng.integers(0, 3, 90), rng.dirichlet(np.ones(3), 90)
+    m = post_hoc_metrics(y, p, "classification")
+    assert m["accuracy"] == pytest.approx(np.mean(p.argmax(1) == y))
+    assert m["roc_auc"] == pytest.approx(roc_auc_score(y, p, multi_class="ovr"))
+    assert m["average_precision"] == pytest.approx(average_precision_score(np.eye(3)[y], p))
+    y2, p2 = rng.integers(0, 2, 90), rng.dirichlet(np.ones(2), 90)
+    assert post_hoc_metrics(y2, p2, "classification")["roc_auc"] == pytest.approx(roc_auc_score(y2, p2[:, 1]))
+    y01 = np.minimum(y, 1)  # class 2 absent from the test fold: skipped
+    expected = np.mean([roc_auc_score(y01 == c, p[:, c]) for c in (0, 1)])
+    assert post_hoc_metrics(y01, p, "classification")["roc_auc"] == pytest.approx(expected)
+    t = rng.normal(size=50)
+    assert post_hoc_metrics(t, (t + 0.3)[:, None], "regression")["r2"] == pytest.approx(r2_score(t, t + 0.3))
 
 
 def test_interim_report_pairs_runs():

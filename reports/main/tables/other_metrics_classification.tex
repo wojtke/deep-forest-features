@@ -1,0 +1,36 @@
+\begin{tabular}{llllllllll}
+\toprule
+metric & comparison & method & reference & datasets & median\_reduction & wins & losses & zeros & p \\
+\midrule
+accuracy & H1 & residual\_xx & base & 16 & -0.0036 & 8 & 8 & 0 & 0.782 \\
+accuracy & H2a & residual\_xx & random\_xx & 16 & -0.0013 & 7 & 8 & 1 & 0.6496 \\
+accuracy & H2b & residual\_xx & target\_xx & 16 & 0.0031 & 11 & 5 & 0 & 0.1439 \\
+accuracy & H3 & xp\_mi & base & 16 & 0.000568 & 9 & 6 & 1 & 0.4265 \\
+accuracy & H4 & nonlinear & base & 16 & 0.0018 & 10 & 6 & 0 & 0.5619 \\
+accuracy & H5 & monotone & base & 16 & -0.0012 & 7 & 9 & 0 & 0.3225 \\
+roc\_auc & H1 & residual\_xx & base & 16 & -0.0143 & 4 & 12 & 0 & 0.025 \\
+roc\_auc & H2a & residual\_xx & random\_xx & 16 & -0.0112 & 5 & 11 & 0 & 0.1754 \\
+roc\_auc & H2b & residual\_xx & target\_xx & 16 & 0.0011 & 8 & 8 & 0 & 0.6685 \\
+roc\_auc & H3 & xp\_mi & base & 16 & 0.0042 & 9 & 7 & 0 & 0.9799 \\
+roc\_auc & H4 & nonlinear & base & 16 & 0.0018 & 9 & 7 & 0 & 0.5619 \\
+roc\_auc & H5 & monotone & base & 16 & -0.0221 & 2 & 14 & 0 & 0.0076 \\
+average\_precision & H1 & residual\_xx & base & 16 & -0.0076 & 6 & 10 & 0 & 0.3484 \\
+average\_precision & H2a & residual\_xx & random\_xx & 16 & -0.0139 & 5 & 11 & 0 & 0.2522 \\
+average\_precision & H2b & residual\_xx & target\_xx & 16 & 0.0047 & 8 & 8 & 0 & 0.6322 \\
+average\_precision & H3 & xp\_mi & base & 16 & 0.000266 & 8 & 8 & 0 & 0.5619 \\
+average\_precision & H4 & nonlinear & base & 16 & 0.0053 & 10 & 6 & 0 & 0.1591 \\
+average\_precision & H5 & monotone & base & 16 & -0.0091 & 2 & 14 & 0 & 0.0182 \\
+log\_loss & H1 & residual\_xx & base & 16 & -0.013 & 5 & 11 & 0 & 0.2312 \\
+log\_loss & H2a & residual\_xx & random\_xx & 16 & -0.0103 & 6 & 10 & 0 & 0.2522 \\
+log\_loss & H2b & residual\_xx & target\_xx & 16 & 0.0066 & 11 & 5 & 0 & 0.0934 \\
+log\_loss & H3 & xp\_mi & base & 16 & -0.0089 & 3 & 13 & 0 & 0.0386 \\
+log\_loss & H4 & nonlinear & base & 16 & 0.000896 & 9 & 7 & 0 & 0.7057 \\
+log\_loss & H5 & monotone & base & 16 & -0.0158 & 1 & 15 & 0 & 0.00058 \\
+macro\_f1 & H1 & residual\_xx & base & 16 & 0.0026 & 9 & 7 & 0 & 0.5966 \\
+macro\_f1 & H2a & residual\_xx & random\_xx & 16 & 0.0058 & 8 & 8 & 0 & 0.8999 \\
+macro\_f1 & H2b & residual\_xx & target\_xx & 16 & 0.0051 & 10 & 6 & 0 & 0.1167 \\
+macro\_f1 & H3 & xp\_mi & base & 16 & 0.0035 & 9 & 7 & 0 & 0.2979 \\
+macro\_f1 & H4 & nonlinear & base & 16 & 0.0034 & 10 & 6 & 0 & 0.5282 \\
+macro\_f1 & H5 & monotone & base & 16 & -0.0013 & 8 & 8 & 0 & 0.4637 \\
+\bottomrule
+\end{tabular}
